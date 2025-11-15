@@ -1,24 +1,14 @@
-name = "facebookdownbot"
-main = "index.mjs" 
-compatibility_date = "2025-10-12"
+name = "fdown-telegram-bot"
+main = "index.mjs" # හෝ ඔබේ entry file එක
+compatibility_date = "2025-011-01" # වත්මන් දිනයට ආසන්න දිනයක් යොදන්න.
 
+# ⚠️ මේක තමයි ප්‍රධාන වෙනස!
+compatibility_flags = [
+    "nodejs_compat" 
+]
 
-[[kv_namespaces]]
-binding = "BOT_CONFIG"  # This is the variable name used in the JavaScript code (env.BOT_CONFIG)
-id = "ec6bc090856641e9b2aca785d7a34727"  # 🛑 REPLACE WITH YOUR KV NAMESPACE ID (e.g., a long string like 'f72b38...')
-
-[vars]
-# We remove BOT_OWNER_USER_ID from JS and put it here
-BOT_OWNER_USER_ID = 1901997764 
+# අමතර Workers configuration තිබේ නම් ඒවා මෙතනට
 
 # Workers Logs සහ Tracing සක්‍රීය කිරීම සඳහා
 [observability]
 enabled = true
-
-# Logs සඳහා අමතර විස්තර (අවශ්‍ය නම් පමණි)
-# [observability.logs]
-# invocation_logs = true
-# head_sampling_rate = 1.0 # සියලුම requests වල Logs ගැනීමට (1.0 = 100%)YOUR ACTUAL TELEGRAM USER ID
-
-# You can also move the Telegram Token here if you prefer to see it in wrangler.toml
-# TELEGRAM_TOKEN = "8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8"
