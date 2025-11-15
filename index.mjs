@@ -9,32 +9,29 @@ const BOT_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
 
 let bot;
 
-// 🎯 වඩාත්ම විශ්වාසදායක Scraping Logic එක
-async function getDownloadLink(url) {
-    // සෘජුවම download.php URL එකට යමු, වඩා හොඳ Headers සමඟින්.
+// --- 1. Scraping Logic: fdown.net වෙතින් Direct File Link එක සොයා ගැනීම ---
+
+async function getFileLink(url) {
     const scrapeUrl = `https://fdown.net/download.php?url=${encodeURIComponent(url)}`;
     
     try {
         const response = await axios.get(scrapeUrl, {
             headers: {
-                // බොට් හඳුනා ගැනීම අවම කිරීමට නවතම User-Agent
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-                // Referer Header එක Bot Check එක මගහැරීමට අනිවාර්යයි
                 'Referer': 'https://fdown.net/',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             },
-            // Redirects අනුගමනය කරන්න
             maxRedirects: 5 
         });
         
         const $ = cheerio.load(response.data);
 
-        // 🎯 පුළුල් Selector Logic: 'Download' යන වචනය අඩංගු ඕනෑම ලින්ක් එකක් සොයයි
+        // පුළුල් Selector Logic: 'Download' යන වචනය අඩංගු ඕනෑම ලින්ක් එකක් සොයයි
         let linkElement = $('a:contains("Download")'); 
 
         if (linkElement.length > 0) {
             
-            // 1. HD Link එක සොයමු (වඩා හොඳ තත්ත්වය)
+            // 1. HD Link එක සොයමු
             let hdLink = linkElement.filter(':contains("HD Quality")').attr('href');
             if (hdLink) return hdLink;
 
@@ -43,21 +40,42 @@ async function getDownloadLink(url) {
             if (normalLink) return normalLink;
             
             // 3. වෙනත් 'Download' Link එකක් (Fallback)
-            // 'Download' සහිත පළමු වලංගු link එක දෙමු
             let firstDownloadLink = linkElement.first().attr('href');
             if (firstDownloadLink) return firstDownloadLink;
         }
 
-        return null; // Download Link සොයා ගැනීමට නොහැකි විය
+        return null; 
         
     } catch (error) {
-        // දෝෂය Cloudflare Logs වෙත යවමු
         console.error("Fdown Scraping Error:", error.message);
         return null; 
     }
 }
 
-// Telegram Handlers define කරන function එක
+// --- 2. Download Logic: සොයාගත් Link එකෙන් වීඩියෝව Buffer එකක් ලෙස ලබා ගැනීම ---
+
+async function downloadVideoBuffer(downloadUrl) {
+    try {
+        const response = await axios.get(downloadUrl, {
+            responseType: 'arraybuffer', // දත්ත Buffer එකක් ලෙස ලබා ගැනීමට
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            },
+            // විශාල වීඩියෝ සඳහා timeout එක වැඩි කරන්න (මි. තත්පර 60,000 = තත්පර 60)
+            timeout: 60000 
+        });
+        
+        // වීඩියෝ දත්ත Buffer එකක් ලෙස ලබා දෙමු
+        return response.data; 
+    } catch (error) {
+        console.error("Buffer Download Error:", error.message);
+        return null;
+    }
+}
+
+
+// --- 3. Telegram Handlers ---
+
 function setupBotHandlers(botInstance) {
     botInstance.start((ctx) => {
         ctx.reply(`👋 හායි ${ctx.from.first_name}!\nමම fdown.net හරහා Facebook වීඩියෝ බාගත කරන Bot කෙනෙක්. කරුණාකර Facebook වීඩියෝ ලින්ක් එකක් (URL) මට එවන්න.`);
@@ -76,18 +94,32 @@ function setupBotHandlers(botInstance) {
             try {
                 loadingMsg = await ctx.reply('⌛️ වීඩියෝ ලින්ක් එක සකසමින්...', { reply_to_message_id: messageId });
                 
-                const downloadLink = await getDownloadLink(url);
+                // 1. Download File Link එක සොයන්න
+                const fileLink = await getFileLink(url); 
+                let videoBuffer = null;
 
-                if (downloadLink) {
+                if (fileLink) {
+                    // 2. Link එකෙන් වීඩියෝව Buffer එකක් ලෙස Download කරන්න
+                    await ctx.editMessageText('📥 වීඩියෝව බාගත කරමින්... (මෙයට විනාඩියක් පමණ ගත විය හැකිය)', { 
+                        chat_id: loadingMsg.chat.id,
+                        message_id: loadingMsg.message_id 
+                    });
+                    
+                    videoBuffer = await downloadVideoBuffer(fileLink);
+                }
+
+                if (videoBuffer) {
                     await ctx.deleteMessage(loadingMsg.message_id).catch(e => console.log("Can't delete msg:", e.message));
 
-                    await ctx.replyWithVideo(downloadLink, { 
+                    // 3. Buffer එක කෙලින්ම Telegram වෙත Upload කරන්න (Bad Request මඟහැරීමට)
+                    await ctx.replyWithVideo({ source: videoBuffer, filename: 'facebook_video.mp4' }, { 
                         caption: `ඔබ ඉල්ලූ වීඩියෝව මෙන්න.`,
                         reply_to_message_id: messageId 
                     });
                     
                 } else {
-                    await ctx.editMessageText('⚠️ වීඩියෝව සොයා ගැනීමට නොහැකි විය. කරුණාකර ලින්ක් එක නිවැරදිදැයි පරීක්ෂා කරන්න (Public වීඩියෝ පමණක් වැඩ කරයි).', {
+                    // fileLink නැතිනම් හෝ Buffer එක Download කිරීමට අසමත් වුවහොත්
+                    await ctx.editMessageText('⚠️ වීඩියෝව සොයා ගැනීමට හෝ බාගත කිරීමට නොහැකි විය. කරුණාකර ලින්ක් එක නිවැරදිදැයි පරීක්ෂා කරන්න (Public වීඩියෝ පමණක් වැඩ කරයි).', {
                         chat_id: loadingMsg.chat.id,
                         message_id: loadingMsg.message_id
                     });
@@ -98,7 +130,7 @@ function setupBotHandlers(botInstance) {
                 
                 try {
                     if (loadingMsg) {
-                         await ctx.editMessageText('❌ සමාවෙන්න! වීඩියෝව download කිරීමේදී දෝෂයක් ඇතිවිය. (internal server error).', {
+                         await ctx.editMessageText('❌ සමාවෙන්න! දෝෂයක් ඇතිවිය. (අභ්‍යන්තර දෝෂය).', {
                             chat_id: loadingMsg.chat.id,
                             message_id: loadingMsg.message_id
                         });
@@ -133,7 +165,6 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (error) {
-            // 401 Error එක මෙතැනින් Cloudflare Logs වෙත යවනු ලැබේ.
             console.error('Webhook Handling Error:', error.message);
             return new Response('Error handling update', { status: 500 });
         }
