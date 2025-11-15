@@ -1,5 +1,5 @@
 name = "fdown-telegram-bot"
-main = "index.js" 
+main = "index.mjs" 
 compatibility_date = "2025-11-01" 
 
 # ⚠️ Service Worker එකක් ලෙස නොසලකා ES Module එකක් ලෙස සැලකීමට
