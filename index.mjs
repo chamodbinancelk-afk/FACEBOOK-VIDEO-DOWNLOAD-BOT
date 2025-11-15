@@ -7,11 +7,11 @@ const WEBHOOK_SECRET = "ec6bc090856641e9b2aca785d7a34727";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
-// Facebook වීඩියෝ සබැඳියක් ලබා දෙන තෙවන පාර්ශවීය API එකක්
-// සටහන: මෙම API එක ඕනෑම වෙලාවක ක්‍රියා විරහිත විය හැක.
-const FB_API_URL = "https://api.example.com/facebook-dl?url="; 
+// ⚠️ වැදගත්: මෙය උපකල්පිත URL එකකි. ඔබ ක්‍රියාකාරී Facebook API URL එකක් මෙයට ආදේශ කළ යුතුය.
+// සටහන: ඔබ සොයා ගන්නා API එකේ JSON ප්‍රතිචාර ව්‍යුහය අනුව 'getFbVideoLinks' ශ්‍රිතය වෙනස් කිරීමට සිදු විය හැක.
+const FB_API_URL = "https://example-api.com/v1/download/facebook?url="; 
 
-// --- 2. Telegram API Calls (Telegram API ඇමතුම්) ---
+// --- 2. Telegram API Interaction (Telegram API අන්තර්ක්‍රියා) ---
 
 /**
  * Telegram Chat එකකට සරල පණිවිඩයක් යවයි.
@@ -34,12 +34,12 @@ async function sendMessage(chat_id, text) {
 /**
  * Telegram Chat එකකට වීඩියෝව යවයි (Download Link හරහා).
  */
-async function sendVideoFromUrl(chat_id, video_url) {
+async function sendVideoFromUrl(chat_id, video_url, quality) {
     const url = `${TELEGRAM_API}${BOT_TOKEN}/sendVideo`;
     const payload = {
         chat_id: chat_id,
         video: video_url, // වීඩියෝ සබැඳිය
-        caption: "✅ Facebook වීඩියෝව බාගත කරන ලදී!"
+        caption: `✅ Facebook වීඩියෝව බාගත කරන ලදී! (${quality})`
     };
 
     return fetch(url, {
@@ -62,16 +62,22 @@ async function getFbVideoLinks(videoUrl) {
         // API response එක JSON ලෙස කියවීම
         const data = await apiResponse.json(); 
 
-        // API එකෙන් ලැබෙන දත්ත ව්‍යුහය අනුව HD සහ SD සබැඳි ලබා ගැනීම
-        // (මෙය ඔබ භාවිතා කරන API එක අනුව වෙනස් වේ)
-        if (data.status === 'ok' && data.links) {
+        // !!! මෙහිදී JSON ප්‍රතිචාර ව්‍යුහය ඔබගේ API එක අනුව සකස් කරන්න !!!
+        
+        // සාමාන්‍යයෙන් API මඟින් සපයනු ඇතැයි අපේක්ෂා කරන දත්ත ව්‍යුහය පරීක්ෂා කිරීම.
+        if (data && data.status === 'success' && data.data && data.data.links) {
+            
+            // HD සහ SD සබැඳි සෙවීම
+            const hdLink = data.data.links.find(link => link.quality === 'HD' || link.quality === '720p')?.url;
+            const sdLink = data.data.links.find(link => link.quality === 'SD' || link.quality === '360p')?.url;
+
             return {
-                hd: data.links.find(link => link.quality === 'HD')?.url,
-                sd: data.links.find(link => link.quality === 'SD')?.url
+                hd: hdLink,
+                sd: sdLink
             };
         }
         
-        return null; // සබැඳි සොයාගත නොහැකි නම්
+        return null; 
 
     } catch (error) {
         console.error("Facebook API error:", error);
@@ -85,28 +91,26 @@ async function handleTelegramWebhook(request) {
     // 1. Webhook Secret එක තහවුරු කිරීම (Security)
     const secret = request.headers.get("x-telegram-bot-api-secret-token");
     if (secret !== WEBHOOK_SECRET) {
-        // ආරක්ෂක හේතූන් මත අවසර නොදීම
         return new Response('Unauthorized', { status: 401 }); 
     }
     
     // 2. Body එකෙන් Telegram Update එක ලබා ගැනීම
     const update = await request.json();
 
-    // 3. පණිවිඩය (message) තිබේදැයි පරීක්ෂා කිරීම
     if (!update.message || !update.message.text) {
-        return new Response('No message text', { status: 200 }); // වෙනත් update වර්ග නොසලකා හරින්න
+        return new Response('No message text', { status: 200 });
     }
 
     const chatId = update.message.chat.id;
     const text = update.message.text.trim();
     
-    // 4. විධානය (Command) පරීක්ෂා කිරීම
+    // 3. විධානය (Command) පරීක්ෂා කිරීම
     if (text.startsWith('/start')) {
         await sendMessage(chatId, "👋 **ආයුබෝවන්!** මම Facebook වීඩියෝ බාගත කරන්නා. මට Facebook වීඩියෝ සබැඳියක් (link) එවන්න.");
         return new Response('Start command handled', { status: 200 });
     }
 
-    // 5. Facebook URL එකක්දැයි පරීක්ෂා කිරීම
+    // 4. Facebook URL එකක්දැයි පරීක්ෂා කිරීම
     const fbUrlMatch = text.match(/https?:\/\/(?:www\.|m\.)?facebook\.com\/\S+/i);
     if (fbUrlMatch) {
         const fbUrl = fbUrlMatch[0];
@@ -115,13 +119,13 @@ async function handleTelegramWebhook(request) {
         const videoLinks = await getFbVideoLinks(fbUrl);
 
         if (videoLinks && videoLinks.hd) {
-            // HD සබැඳිය භාවිතයෙන් Telegram වෙත වීඩියෝව යැවීම
-            await sendVideoFromUrl(chatId, videoLinks.hd);
+            // HD සබැඳිය භාවිතයෙන් යැවීම
+            await sendVideoFromUrl(chatId, videoLinks.hd, 'HD');
         } else if (videoLinks && videoLinks.sd) {
              // HD නොමැති නම් SD සබැඳිය භාවිතයෙන් යැවීම
-            await sendVideoFromUrl(chatId, videoLinks.sd);
+            await sendVideoFromUrl(chatId, videoLinks.sd, 'SD');
         } else {
-            await sendMessage(chatId, "❌ වීඩියෝ සබැඳිය ලබා ගැනීමට නොහැකි විය. සබැඳිය නිවැරදි දැයි පරීක්ෂා කරන්න.");
+            await sendMessage(chatId, "❌ වීඩියෝ සබැඳිය ලබා ගැනීමට නොහැකි විය. සබැඳිය නිවැරදි දැයි පරීක්ෂා කරන්න, නැතහොත් Bot ගේ API සේවාව අක්‍රිය විය හැක.");
         }
         
     } else {
@@ -152,10 +156,9 @@ addEventListener('fetch', event => {
 
 /**
  * Webhook එක Telegram හි සකස් කිරීමට උදව් කරයි.
- * මෙය ඔබගේ Worker URL එකට /registerWebhook එකතු කර බ්‍රවුසරයේ විවෘත කිරීමෙන් සිදු කළ හැක.
  */
 async function registerWebhook(workerUrl) {
-    const webhookUrl = `${workerUrl}`; // worker URL එක Webhook එක ලෙස
+    const webhookUrl = `${workerUrl}`; 
     const url = `${TELEGRAM_API}${BOT_TOKEN}/setWebhook?url=${webhookUrl}&secret_token=${WEBHOOK_SECRET}`;
     
     try {
