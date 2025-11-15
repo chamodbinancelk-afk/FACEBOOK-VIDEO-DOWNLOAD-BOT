@@ -1,4 +1,4 @@
-// --- 1. Variables and Constants (ටෝකන සහ URL) ---
+// --- 1. Variables and Constants ---
 
 // ********* ඔබගේ සැබෑ ටෝකන සහ Secret *********
 const BOT_TOKEN = "8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8"; 
@@ -7,13 +7,11 @@ const WEBHOOK_SECRET = "ec6bc090856641e9b2aca785d7a34727";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
-// ⚠️ නව RapidAPI Endpoint Configuration
-const RAPIDAPI_HOST = 'facebook-media-downloader1.p.rapidapi.com';
-const RAPIDAPI_KEY = 'd110357f31msh2e0d5216204b77dp10675bjsn98cfa8c30266'; // ඔබ විසින් ලබා දුන් යතුර
-const RAPIDAPI_URL = `https://${RAPIDAPI_HOST}/get_media`;
+// ⚠️ fdown.net Endpoint Configuration
+const FDOWN_URL = "https://fdown.net/";
 
+// --- 2. Telegram API Interaction (පෙර පරිදිම) ---
 
-// --- 2. Telegram API Interaction (Telegram API අන්තර්ක්‍රියා) ---
 async function sendMessage(chat_id, text) {
     const url = `${TELEGRAM_API}${BOT_TOKEN}/sendMessage`;
     const payload = { chat_id: chat_id, text: text, parse_mode: 'Markdown' };
@@ -26,47 +24,53 @@ async function sendVideoFromUrl(chat_id, video_url, caption) {
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 }
 
-// --- 3. Facebook Video Downloader Logic (නව RapidAPI භාවිතයෙන්) ---
+// --- 3. ⚠️ fdown.net Scraping Logic ---
 
 async function getFbVideoLinks(videoUrl) {
     try {
-        const response = await fetch(RAPIDAPI_URL, {
+        // fdown.net වෙත POST request එකක් යවන්න (Form Submission අනුකරණය)
+        const formData = new FormData();
+        formData.append('URL', videoUrl);
+        
+        console.log(`Attempting to scrape fdown.net for URL: ${videoUrl}`);
+
+        const response = await fetch(FDOWN_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'x-rapidapi-host': RAPIDAPI_HOST,
-                'x-rapidapi-key': RAPIDAPI_KEY 
+                // මෙය වැදගත්: බ්‍රවුසරයක් ලෙස පෙනී සිටීම
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
+                // Content-Type එක අවශ්‍ය නොවේ, එය FormData මගින් ස්වයංක්‍රීයව සකසයි
             },
-            body: JSON.stringify({ url: videoUrl }) // වීඩියෝ URL එක 'url' ලෙස යවන්න
+            body: formData 
         });
-        
-        if (!response.ok) {
-            console.error(`RapidAPI response status: ${response.status}`);
-            return { error: `API සේවාවෙන් දෝෂයක් (${response.status})` };
-        }
-        
-        const data = await response.json(); 
-        console.log("RapidAPI Full Response Data:", data); 
 
-        // ⚠️ නව API ප්‍රතිචාර ව්‍යුහය පරීක්ෂා කිරීම (උපකල්පනය):
-        // අපි උපකල්පනය කරන්නේ සබැඳි 'links' අරාවක 'url' සහ 'quality' ලෙස තිබෙන බවයි.
-        if (data && Array.isArray(data.links) && data.links.length > 0) {
-            
-            // HD සහ SD සබැඳි සොයා ගනී
-            const hdLink = data.links.find(link => link.quality && (link.quality.includes('720') || link.quality.toUpperCase() === 'HD'))?.url;
-            const sdLink = data.links.find(link => link.quality && (link.quality.includes('360') || link.quality.toUpperCase() === 'SD'))?.url;
-            
-            if (hdLink || sdLink) {
-                return { hd: hdLink, sd: sdLink };
-            }
-            return { error: "බාගත කිරීමේ සබැඳි හමු නොවීය. වීඩියෝව Private විය හැක." };
+        if (!response.ok) {
+            console.error(`fdown.net scraping failed with status: ${response.status}`);
+            return { error: `fdown.net ප්‍රවේශ දෝෂය (${response.status})` };
+        }
+
+        const htmlText = await response.text();
+        // console.log("FDOWN HTML Response:", htmlText.substring(0, 1000)); // HTML ප්‍රතිචාරයේ කොටසක් ලොග් කිරීම
+
+        // ⚠️ අස්ථායී කොටස: HTML වෙතින් HD සහ SD සබැඳි සෙවීම
+        // HD සබැඳිය: 'Download HD Video' බොත්තමේ සබැඳිය
+        const hdMatch = htmlText.match(/href="(.*?)"[^>]*>Download HD Video/);
+        const sdMatch = htmlText.match(/href="(.*?)"[^>]*>Download Normal Quality/); 
+        
+        const hdLink = hdMatch && hdMatch[1] ? hdMatch[1] : null;
+        const sdLink = sdMatch && sdMatch[1] ? sdMatch[1] : null;
+
+        if (hdLink || sdLink) {
+             console.log(`Scraping Success: HD=${hdLink ? 'Found' : 'Not Found'}, SD=${sdLink ? 'Found' : 'Not Found'}`);
+            return { hd: hdLink, sd: sdLink };
         } 
         
-        return { error: "API ප්‍රතිචාරයේ සබැඳි හමු නොවීය." };
+        console.error("Scraping Failure: No HD/SD links found in fdown.net response.");
+        return { error: "බාගත කිරීමේ සබැඳි HTML වෙතින් උකහා ගැනීමට නොහැක. (වීඩියෝව Private හෝ අඩවි ව්‍යුහය වෙනස් වී තිබිය හැක)." };
 
     } catch (error) {
-        console.error("RapidAPI fetch error:", error.message);
-        return { error: `API ඇමතීමේ දෝෂය: ${error.message}` };
+        console.error("fdown.net fetch error:", error.message);
+        return { error: `Scraping දෝෂය: ${error.message}` };
     }
 }
 
@@ -95,12 +99,13 @@ async function handleTelegramWebhook(request) {
         
         await sendMessage(chatId, "⏳ වීඩියෝ සබැඳිය විශ්ලේෂණය කරමින්... කරුණාකර මොහොතක් රැඳී සිටින්න.");
         
-        const result = await getFbVideoLinks(fbUrl);
+        const result = await getFbVideoLinks(fbUrl); // Scraping ශ්‍රිතය ඇමතීම
 
         if (result.error) {
             await sendMessage(chatId, `❌ දෝෂය: ${result.error}\n\n💡 කරුණාකර පරීක්ෂා කරන්න:\n- වීඩියෝ URL නිවැරදි දැයි\n- වීඩියෝව ප්‍රසිද්ධ (public) දැයි`);
         
         } else if (result.hd) {
+            // HD යැවීමට උත්සාහ කිරීම
             try {
                 await sendVideoFromUrl(chatId, result.hd, '✅ Facebook වීඩියෝව බාගත කරන ලදී! (HD)');
             } catch (error) {
@@ -117,6 +122,7 @@ async function handleTelegramWebhook(request) {
                 }
             }
         } else if (result.sd) {
+            // SD සෘජුවම යවන්න
             try {
                  await sendVideoFromUrl(chatId, result.sd, '✅ Facebook වීඩියෝව බාගත කරන ලදී! (SD)');
             } catch (error) {
