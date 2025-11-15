@@ -1,10 +1,6 @@
 name = "facebookdownbot"
-main = "index.mjs" 
-compatibility_date = "2025-11-01" 
-
-compatibility_flags = [
-    "nodejs_compat" 
-]
+main = "src/worker.js"
+compatibility_date = "2024-11-15"
 
 # අමතර Workers configuration තිබේ නම් ඒවා මෙතනට
 
