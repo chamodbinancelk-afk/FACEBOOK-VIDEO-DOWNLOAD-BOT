@@ -1,60 +1,57 @@
 import { Telegraf } from 'telegraf';
 import axios from 'axios';
 import * as cheerio from 'cheerio'; 
-// URLSearchParams දැන් Cloudflare Worker environment එකෙන් auto-inject විය යුතුයි, 
-// එසේ නොවුණොත්, 'url' import එක අවශ්‍යයි: import { URLSearchParams } from 'url';
+// Cloudflare Workers වලදී, Node.js Built-in modules සඳහා nodejs_compat flag එක අවශ්‍යයි.
 
 // ⚠️ Bot Token එක
+// සටහන: ඔබේ Token එකේ 401 Error එකක් තිබිය හැක. නිවැරදි Token එක මෙහි ඇතුළත් කරන්න.
 const BOT_TOKEN = '83827277460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
 
 let bot;
 
-// 🎯 අවසාන යාවත්කාලීන කරන ලද Scraping Logic
+// 🎯 වඩාත්ම විශ්වාසදායක Scraping Logic එක
 async function getDownloadLink(url) {
-    // fdown.net bot traffic block කරන නිසා, අපි සෘජුවම download.php URL එකට යමු.
+    // සෘජුවම download.php URL එකට යමු, වඩා හොඳ Headers සමඟින්.
     const scrapeUrl = `https://fdown.net/download.php?url=${encodeURIComponent(url)}`;
     
     try {
         const response = await axios.get(scrapeUrl, {
             headers: {
-                // වඩාත් නිවැරදි User-Agent එකක්
+                // බොට් හඳුනා ගැනීම අවම කිරීමට නවතම User-Agent
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-                // Referer Header එක අනිවාර්යයෙන්ම අවශ්‍යයි!
+                // Referer Header එක Bot Check එක මගහැරීමට අනිවාර්යයි
                 'Referer': 'https://fdown.net/',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             },
-            // fdown.net redirect වුවහොත් එය අනුගමනය කරන්න
+            // Redirects අනුගමනය කරන්න
             maxRedirects: 5 
         });
         
         const $ = cheerio.load(response.data);
 
-        // 🎯 නවතම Web Scraping Logic (පිටුවේ ඇති පාඨය මත පදනම්ව)
-        let linkElement;
-
-        // 1. HD Link එක සොයා ගැනීම (පාඨය: "Download Video in HD Quality")
-        linkElement = $('a:contains("Download Video in HD Quality")'); 
-        
-        if (linkElement.length === 0) {
-             // 2. SD Link එක සොයා ගැනීම (පාඨය: "Download Video in Normal Quality")
-            linkElement = $('a:contains("Download Video in Normal Quality")');
-        }
-        
-        // 3. පැරණි Selector එකක් පරීක්ෂා කරමු (Fallback)
-        if (linkElement.length === 0) {
-            // බොත්තම් වලට btn ක්ලාස් එකක් තිබේ නම්, href එකක් සහිත පළමු A-tag එක සොයන්න
-            linkElement = $('a.btn[href^="http"]'); 
-        }
+        // 🎯 පුළුල් Selector Logic: 'Download' යන වචනය අඩංගු ඕනෑම ලින්ක් එකක් සොයයි
+        let linkElement = $('a:contains("Download")'); 
 
         if (linkElement.length > 0) {
-            // පළමු වලංගු link එකේ href එක ලබා දෙමු
-            return linkElement.first().attr('href');
+            
+            // 1. HD Link එක සොයමු (වඩා හොඳ තත්ත්වය)
+            let hdLink = linkElement.filter(':contains("HD Quality")').attr('href');
+            if (hdLink) return hdLink;
+
+            // 2. Normal Quality Link එක සොයමු
+            let normalLink = linkElement.filter(':contains("Normal Quality")').attr('href');
+            if (normalLink) return normalLink;
+            
+            // 3. වෙනත් 'Download' Link එකක් (Fallback)
+            // 'Download' සහිත පළමු වලංගු link එක දෙමු
+            let firstDownloadLink = linkElement.first().attr('href');
+            if (firstDownloadLink) return firstDownloadLink;
         }
 
-        return null; 
+        return null; // Download Link සොයා ගැනීමට නොහැකි විය
         
     } catch (error) {
-        // දෝෂයක් Cloudflare Logs වෙත යවමු
+        // දෝෂය Cloudflare Logs වෙත යවමු
         console.error("Fdown Scraping Error:", error.message);
         return null; 
     }
@@ -136,6 +133,7 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (error) {
+            // 401 Error එක මෙතැනින් Cloudflare Logs වෙත යවනු ලැබේ.
             console.error('Webhook Handling Error:', error.message);
             return new Response('Error handling update', { status: 500 });
         }
