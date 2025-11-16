@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/local.js",
-    "build": "bun build ./src/worker.js --outdir ./dist --target=worker",
+    "build": "bun build ./src/worker.js --outdir ./dist",
     "deploy": "npx wrangler deploy"
   },
   "dependencies": {
