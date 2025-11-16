@@ -1,19 +1,20 @@
 {
   "name": "facebookdownbot",
-  "version": "3.0.0",
-  "description": "Telegram Facebook Video Downloader Bot with yt-dlp",
-  "main": "src/worker.js",
+  "version": "1.0.0",
+  "description": "Telegram Bot for downloading Facebook videos, deployed on Cloudflare Workers.",
+  "main": "src/local.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "bun run src/local.js",
+    "build": "bun build ./src/worker.js --outdir ./dist --target=worker",
+    "deploy": "npx wrangler deploy"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
     "grammy": "^1.38.3",
     "playwright": "^1.56.1"
   },
   "devDependencies": {
-    "wrangler": "^3.78.0"
+    "wrangler": "^3.114.15"
   }
 }
