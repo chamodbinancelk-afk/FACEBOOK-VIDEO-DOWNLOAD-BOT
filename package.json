@@ -1,17 +1,18 @@
 {
   "name": "facebookdownbot",
-  "version": "2.0.0",
-  "description": "Telegram Facebook Video Downloader Bot - Cloudflare Workers Edition",
+  "version": "3.0.0",
+  "description": "Telegram Facebook Video Downloader Bot with yt-dlp",
   "main": "src/worker.js",
   "type": "module",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
-    "grammy": "^1.38.3"
+    "express": "^5.1.0",
+    "grammy": "^1.38.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "youtube-dl-exec": "^3.0.26"
   },
   "devDependencies": {
     "wrangler": "^3.78.0"
