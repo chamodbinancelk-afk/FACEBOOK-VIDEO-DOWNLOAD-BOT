@@ -1,12 +1,75 @@
 // src/services/facebook.js
 
-// Playwright සම්පූර්ණයෙන්ම ඉවත් කර ඇත.
-
-async function tryScrapingService(videoUrl, serviceUrl) {
+/**
+ * විකල්පය 2: සෘජුවම Facebook වීඩියෝ පිටුවෙන් HTML සූරා ගැනීම
+ * (Direct Facebook HTML Scraping)
+ * මෙම ක්‍රමය ඉතා අස්ථිර (Brittle) බව සලකන්න.
+ */
+async function tryDirectFacebookScraping(videoUrl) {
   try {
-    console.log(`Trying scraping service: ${serviceUrl}`);
+    console.log(`Trying Direct Facebook Scraping: ${videoUrl}`);
     
-    // Scraping service එකට POST ඉල්ලීම යවයි
+    // Facebook වෙත සෘජු ඉල්ලීමක් යවයි
+    const response = await fetch(videoUrl, {
+      method: 'GET',
+      headers: {
+        // Desktop User Agent එකක් භාවිතා කරන්නේ වීඩියෝ සබැඳි අඩංගු සර්වර්-සයිඩ් HTML ලබා ගැනීමටය.
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Facebook returned status ${response.status}`);
+    }
+    
+    const html = await response.text();
+    
+    let hdUrl = null;
+    let sdUrl = null;
+
+    // HD සහ SD සබැඳි සඳහා JSON strings සෙවීම
+    const hdMatch = html.match(/"hd_src":"(.*?)"/);
+    const sdMatch = html.match(/"sd_src":"(.*?)"/);
+
+    if (hdMatch && hdMatch[1]) {
+        // URL escape වී ඇති බැවින් නිවැරදි කරයි
+        hdUrl = hdMatch[1].replace(/\\/g, ''); 
+    }
+
+    if (sdMatch && sdMatch[1]) {
+        sdUrl = sdMatch[1].replace(/\\/g, '');
+    }
+
+    if (!hdUrl && !sdUrl) {
+      throw new Error('No video links found in direct HTML (hd_src/sd_src missing)');
+    }
+    
+    return {
+      url: hdUrl || sdUrl,
+      hd: hdUrl,
+      sd: sdUrl,
+      title: 'Facebook Video',
+      service: 'DirectScraping'
+    };
+  } catch (error) {
+    console.error(`Direct Facebook Scraping failed: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * ද්විතීයික විකල්පය: තෙවැනි පාර්ශවීය scraping සේවාවක් (Downloader website) භාවිතා කරයි.
+ * (FBDOWN/GetFVid වැනි)
+ */
+async function tryScrapingService(videoUrl, serviceUrl, serviceName) {
+  try {
+    console.log(`Trying scraping service: ${serviceName} at ${serviceUrl}`);
+    
+    // Cloudflare Workers මත Time out ගැටළු වළක්වා ගැනීමට, කෙටි timeout එකක් සකසයි
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000); 
+
     const response = await fetch(serviceUrl, {
       method: 'POST',
       headers: {
@@ -14,16 +77,19 @@ async function tryScrapingService(videoUrl, serviceUrl) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Referer': serviceUrl
       },
-      body: `url=${encodeURIComponent(videoUrl)}` 
+      body: `url=${encodeURIComponent(videoUrl)}`,
+      signal: controller.signal // Time out control එකට
     });
     
+    clearTimeout(timeout);
+
     if (!response.ok) {
-      throw new Error(`Scraping service returned status ${response.status}`);
+      throw new Error(`${serviceName} returned status ${response.status}`);
     }
     
     const html = await response.text();
     
-    // HTML ප්‍රතිචාරයෙන් HD සහ SD සබැඳි සොයා ගනී
+    // HTML ප්‍රතිචාරයෙන් HD සහ SD සබැඳි සෙවීම
     const hdMatch = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*Download\s+in\s+(?:HD|High)/i);
     const sdMatch = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*Download\s+in\s+(?:SD|Normal)/i);
     
@@ -38,7 +104,7 @@ async function tryScrapingService(videoUrl, serviceUrl) {
           hd: anyDownload[1],
           sd: anyDownload[1],
           title: 'Facebook Video',
-          service: 'Scraping'
+          service: serviceName
         };
       }
       throw new Error('No download links found');
@@ -49,10 +115,15 @@ async function tryScrapingService(videoUrl, serviceUrl) {
       hd: hdUrl,
       sd: sdUrl,
       title: 'Facebook Video',
-      service: 'Scraping'
+      service: serviceName
     };
+
   } catch (error) {
-    console.error(`Scraping failed for ${serviceUrl}: ${error.message}`);
+    if (error.name === 'AbortError') {
+      console.error(`${serviceName} timed out.`);
+      throw new Error(`${serviceName} timed out (>${9000}ms)`);
+    }
+    console.error(`${serviceName} failed:`, error.message);
     throw error;
   }
 }
@@ -60,23 +131,21 @@ async function tryScrapingService(videoUrl, serviceUrl) {
 export async function getFbVideoInfo(videoUrl, env) {
   console.log(`Fetching video info for: ${videoUrl}`);
   
-  // උත්සාහ කිරීමට විවිධ scraping සේවාවන් ලැයිස්තුව
+  // උත්සාහ කිරීමට සේවාවන් ලැයිස්තුව - Direct Scraping ප්‍රමුඛත්වය ලබා දෙයි
   const services = [
-    // FBDOWN.net
+    { name: 'Direct Facebook Scraping', func: tryDirectFacebookScraping },
     { 
-        name: 'FBDOWN', 
-        func: (url) => tryScrapingService(url, 'https://www.fbdown.net/download.php') 
+        name: 'FBDOWN (Backup)', 
+        func: (url) => tryScrapingService(url, 'https://www.fbdown.net/download.php', 'FBDOWN') 
     },
-    // GetFVid (මුල් සේවාව)
     { 
-        name: 'GetFVid', 
-        func: (url) => tryScrapingService(url, 'https://www.getfvid.com/downloader') 
+        name: 'GetFVid (Backup)', 
+        func: (url) => tryScrapingService(url, 'https://www.getfvid.com/downloader', 'GetFVid') 
     },
   ];
   
   for (const service of services) {
     try {
-      console.log(`Trying ${service.name}...`);
       const result = await service.func(videoUrl);
       console.log(`✅ Success with ${service.name}`);
       return {
@@ -90,19 +159,14 @@ export async function getFbVideoInfo(videoUrl, env) {
       };
     } catch (error) {
       console.log(`❌ ${service.name} failed: ${error.message}`);
-      // එක් සේවාවක් අසාර්ථක වුවහොත්, ඊළඟ එක උත්සාහ කරයි
       continue; 
     }
   }
   
-  console.log('\n⚠️ All methods failed. Providing helpful message to user.');
+  console.log('\n⚠️ All methods failed.');
   
   return {
     error: '❌ වීඩියෝව බාගත කිරීමට නොහැකි විය. / Unable to download video.\n\n' +
-           '💡 කරුණාකර පරීක්ෂා කරන්න / Please check:\n' +
-           '• වීඩියෝව ප්‍රසිද්ධ (public) දැයි / Video is public\n' +
-           '• වීඩියෝව තවමත් ලබා ගත හැකි දැයි / Video is still available\n' +
-           '• URL එක නිවැරදි දැයි / URL is correct\n\n' +
-           '🔄 සියලු සේවාවන් අසාර්ථක විය. කරුණාකර පසුව නැවත උත්සාහ කරන්න.'
+           '💡 සියලුම බාගත කිරීමේ ක්‍රම අසාර්ථක විය. කරුණාකර පසුව නැවත උත්සාහ කරන්න, නැතහොත් වීඩියෝව Public දැයි පරීක්ෂා කරන්න.'
   };
 }
