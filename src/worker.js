@@ -1,24 +1,9 @@
 /**
  * src/index.js
- * Final Fix V14: Fixed "telegramApi is not defined" error by moving variable declarations inside fetch().
+ * Final Fix V16: Added 'locale' hidden parameter to POST request.
  */
 
-// ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
-function escapeMarkdownV2(text) {
-    if (!text) return "";
-    return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
-}
-
-// ** 2. Scraped Text Cleaner Function **
-function sanitizeText(text) {
-    if (!text) return "";
-    let cleaned = text.replace(/<[^>]*>/g, '').trim(); 
-    cleaned = cleaned.replace(/\s\s+/g, ' '); 
-    cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); 
-    cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1'); 
-    return cleaned;
-}
-
+// ... (ඉහළ ශ්‍රිත නොවෙනස්ව තබන්න)
 
 export default {
     async fetch(request, env, ctx) {
@@ -27,10 +12,8 @@ export default {
         }
 
         const BOT_TOKEN = env.BOT_TOKEN;
-        // 🛠️ FIX 1: BOT_TOKEN එක භාවිතා කර telegramApi විචල්‍යය fetch ශ්‍රිතය තුළම නිර්මාණය කරයි.
         const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
         
-        // 🛠️ FIX 2: DOWNLOADER_URL එක ද මෙහිදී ප්‍රකාශ කරයි.
         const DOWNLOADER_URL = "https://fbdown.blog/FB-to-mp3-downloader"; 
 
         try {
@@ -55,8 +38,12 @@ export default {
                     try {
                         
                         const formData = new URLSearchParams();
-                        // V13 අනුව 'q' parameter නම භාවිතා කරයි
-                        formData.append('q', text); 
+                        
+                        // V15: parameter නම 'url' ලෙස භාවිතා කරයි
+                        formData.append('url', text); 
+                        
+                        // ** V16 FIX: Hidden 'locale' parameter එක එකතු කිරීම **
+                        formData.append('locale', 'en'); 
 
                         const downloaderResponse = await fetch(DOWNLOADER_URL, {
                             method: 'POST',
@@ -74,7 +61,7 @@ export default {
                         let videoUrl = null;
                         let thumbnailLink = null;
                         
-                        // Scraping Logic (V13 හි තිබූ පරිදි)
+                        // Scraping Logic (නොවෙනස්ව තබමු)
                         const thumbnailRegex = /<img[^>]+src=["']?([^"'\s]+)["']?[^>]*width=["']?300px["']?/i;
                         let thumbnailMatch = resultHtml.match(thumbnailRegex);
                         if (thumbnailMatch && thumbnailMatch[1]) {
@@ -111,7 +98,6 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (e) {
-            // MAIN_WORKER_ERROR දෝෂය දැන් නිවැරදිව වාර්තා වනු ඇත.
             console.error('MAIN_WORKER_ERROR:', e.message);
             return new Response('OK', { status: 200 }); 
         }
@@ -120,7 +106,7 @@ export default {
     // ------------------------------------
     // සහායක Functions (නොවෙනස්ව තබයි)
     // ------------------------------------
-
+    // sendMessage සහ sendVideo ශ්‍රිත කලින් තිබූ පරිදිම පවතී.
     async sendMessage(api, chatId, text, replyToMessageId) {
         try {
             await fetch(`${api}/sendMessage`, {
@@ -141,7 +127,6 @@ export default {
     async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null) {
         
         try {
-            // වීඩියෝ Download කිරීම සහ Telegram වෙත යැවීම...
             const videoResponse = await fetch(videoUrl);
             
             if (videoResponse.status !== 200) {
@@ -178,7 +163,6 @@ export default {
                 }
             }
 
-            // Telegram වෙත යැවීම
             const telegramResponse = await fetch(`${api}/sendVideo`, {
                 method: 'POST',
                 body: formData, 
