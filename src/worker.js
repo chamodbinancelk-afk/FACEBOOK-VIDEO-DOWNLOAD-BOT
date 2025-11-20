@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V35 (Fixes Thumbnail issue by strengthening sendVideo logic)
+ * Final Code V37 (Fixes Thumbnail URL encoding (&amp;) and adds robust type checking)
  * Developer: @chamoddeshan
  */
 
@@ -169,7 +169,7 @@ class WorkerHandlers {
         console.log(`[DEBUG] Attempting to send video. URL: ${videoUrl.substring(0, 50)}...`);
         
         try {
-            // 1. Fetch Video Stream
+            // 1. Fetch Video Stream (Using Headers)
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
                 headers: {
@@ -202,18 +202,34 @@ class WorkerHandlers {
             console.log(`[DEBUG] Video Blob size: ${videoBlob.size} bytes`);
             formData.append('video', videoBlob, 'video.mp4'); 
 
-            // 2. Robust Thumbnail Fetching and Appending (වැඩි දියුණු කළ කොටස)
+            // 2. Robust Thumbnail Fetching and Appending (Headers added - V36/V37 change)
             if (thumbnailLink) {
+                console.log(`[DEBUG] Attempting to fetch thumbnail from: ${thumbnailLink.substring(0, 50)}...`); 
+
                 try {
-                    const thumbResponse = await fetch(thumbnailLink);
+                    const thumbResponse = await fetch(thumbnailLink, {
+                         method: 'GET',
+                         headers: {
+                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                             'Referer': 'https://fdown.net/', 
+                         },
+                    });
+                    
                     if (thumbResponse.ok) {
-                        const thumbBlob = await thumbResponse.blob();
-                        // Check if thumbBlob is valid before appending
-                        if (thumbBlob.size > 0 && thumbBlob.type.startsWith('image/')) {
-                            formData.append('thumb', thumbBlob, 'thumbnail.jpg');
-                            console.log(`[DEBUG] Thumbnail successfully attached (Size: ${thumbBlob.size} bytes).`);
+                        const contentType = thumbResponse.headers.get('Content-Type');
+                        
+                        if (contentType && contentType.startsWith('image/')) {
+                            const thumbBlob = await thumbResponse.blob();
+                            
+                            // Check size again
+                            if (thumbBlob.size > 0) {
+                                formData.append('thumb', thumbBlob, 'thumbnail.jpg');
+                                console.log(`[DEBUG] Thumbnail successfully attached (Size: ${thumbBlob.size} bytes, Type: ${contentType}).`);
+                            } else {
+                                console.warn("Thumbnail fetch was OK, but the blob was zero size. Skipping.");
+                            }
                         } else {
-                            console.warn("Thumbnail fetch was OK, but the blob was invalid or zero size.");
+                            console.warn(`Thumbnail fetch OK, but content type is not image (Type: ${contentType}). Skipping.`);
                         }
                     } else {
                         console.warn(`Thumbnail fetch failed with status: ${thumbResponse.status}. Skipping thumbnail.`);
@@ -541,7 +557,8 @@ export default {
                             const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                             let thumbnailMatch = resultHtml.match(thumbnailRegex);
                             if (thumbnailMatch && thumbnailMatch[1]) {
-                                thumbnailLink = thumbnailMatch[1];
+                                // Thumbnail URL එකේ &amp; encoded තිබේ නම් එය & බවට පරිවර්තනය කිරීම (V37 FIX)
+                                thumbnailLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
                             }
 
                             // Get HD or Normal Quality Link
