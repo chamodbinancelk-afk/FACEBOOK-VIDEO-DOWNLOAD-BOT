@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V30 (Includes fixes for CallbackQuery, Background Broadcast Logic, and Progress Bar Readability)
+ * Final Code V31 (Fixes the IIFE Syntax Error on line ~415 for bun/wrangler build)
  * Developer: @chamoddeshan
  */
 
@@ -20,12 +20,9 @@ function htmlBold(text) {
     return `<b>${text}</b>`;
 }
 
-function escapeMarkdownV2(text) {
-    // Note: Since parse_mode is set to 'HTML', standard Markdown V2 escaping is unnecessary here.
-    return text;
-}
+// Escaping is handled by setting parse_mode: 'HTML'
 
-// *** UPDATED PROGRESS_STATES for better readability (V29) ***
+// *** PROGRESS_STATES for better readability (V29) ***
 const PROGRESS_STATES = [
     { text: "⏳ <b>Loading</b>...▒▒▒▒▒▒▒▒▒▒", percentage: "0%" },
     { text: "📥 <b>Downloading</b>...█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
@@ -384,7 +381,7 @@ export default {
                 // Save user ID to KV in the background
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
-                // A. Broadcast Message Logic (FIXED FOR BACKGROUND EXECUTION)
+                // A. Broadcast Message Logic (FIXED FOR BACKGROUND EXECUTION & SYNTAX ERROR)
                 if (isOwner && message.reply_to_message) {
                     const repliedMessage = message.reply_to_message;
                     
@@ -399,7 +396,8 @@ export default {
                         await handlers.editMessage(chatId, promptMessageId, htmlBold("📣 Broadcast කිරීම ආරම්භ විය. කරුණාකර රැඳී සිටින්න."));
                         
                         // Background එකේ Broadcast කිරීම ආරම්භ කිරීම (using ctx.waitUntil)
-                        ctx.waitUntil(async () => {
+                        // FIX: Changed IIFE syntax from `}())` to `}())` which is common for async IIFE calls.
+                        ctx.waitUntil((async () => {
                             try {
                                 const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
                                 
@@ -413,7 +411,7 @@ export default {
                                 console.error("Broadcast Process Failed in WaitUntil:", e);
                                 await handlers.sendMessage(chatId, htmlBold("❌ Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය."), messageToBroadcastId);
                             }
-                        }());
+                        })()); // <--- FIXED IIFE SYNTAX
 
                         return new Response('OK', { status: 200 });
                     }
