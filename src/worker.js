@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V29 (Includes fixes for CallbackQuery, Broadcast Logic, and Progress Bar Readability)
+ * Final Code V30 (Includes fixes for CallbackQuery, Background Broadcast Logic, and Progress Bar Readability)
  * Developer: @chamoddeshan
  */
 
@@ -21,6 +21,7 @@ function htmlBold(text) {
 }
 
 function escapeMarkdownV2(text) {
+    // Note: Since parse_mode is set to 'HTML', standard Markdown V2 escaping is unnecessary here.
     return text;
 }
 
@@ -257,6 +258,7 @@ class WorkerHandlers {
         for (let i = 0; i < statesToUpdate.length; i++) {
             if (!this.progressActive) break; 
             
+            // Wait 800ms between updates
             await new Promise(resolve => setTimeout(resolve, 800)); 
             
             if (!this.progressActive) break; 
@@ -286,9 +288,10 @@ class WorkerHandlers {
 
             const getMessageUrl = `${telegramApi}/forwardMessage`; 
 
-            for (const userId of userKeys) {
+            // Create an array of promises for concurrent sending
+            const sendPromises = userKeys.map(async (userId) => {
                 // Owner ID එකට ආපසු යැවීම වළක්වයි
-                if (userId.toString() === OWNER_ID.toString()) continue; 
+                if (userId.toString() === OWNER_ID.toString()) return; 
 
                 try {
                     // Forward the original message (supporting text, photo, video, etc.)
@@ -319,7 +322,11 @@ class WorkerHandlers {
                     console.error(`Broadcast failed for user ${userId}:`, e);
                     failedSends++;
                 }
-            }
+            });
+
+            // Wait for all messages to attempt sending
+            await Promise.allSettled(sendPromises);
+
         } catch (e) {
             console.error("Error listing users for broadcast:", e);
         }
@@ -361,6 +368,7 @@ export default {
             if (!message && !callbackQuery) {
                  return new Response('OK', { status: 200 });
             }
+            // Ensure the main execution path is not blocked by KV writes
             ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
 
 
@@ -373,9 +381,10 @@ export default {
                 
                 const userName = message.from.first_name || "User"; 
 
+                // Save user ID to KV in the background
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
-                // A. Broadcast Message Logic 
+                // A. Broadcast Message Logic (FIXED FOR BACKGROUND EXECUTION)
                 if (isOwner && message.reply_to_message) {
                     const repliedMessage = message.reply_to_message;
                     
@@ -384,17 +393,28 @@ export default {
                         
                         const messageToBroadcastId = messageId; 
                         const originalChatId = chatId;
+                        const promptMessageId = repliedMessage.message_id; // Capture prompt message ID
 
                         // Prompt Message එක Edit කිරීම
-                        await handlers.editMessage(chatId, repliedMessage.message_id, htmlBold("📣 Broadcast කිරීම ආරම්භ විය. කරුණාකර රැඳී සිටින්න."));
+                        await handlers.editMessage(chatId, promptMessageId, htmlBold("📣 Broadcast කිරීම ආරම්භ විය. කරුණාකර රැඳී සිටින්න."));
                         
-                        const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
-                        
-                        // Admin හට ප්‍රතිඵල යැවීම
-                        const resultMessage = htmlBold(`Message Send Successfully ✅`) + `\n\n` + htmlBold(`🚀 Send: ${results.successfulSends}`) + `\n` + htmlBold(`❗️ Faild: ${results.failedSends}`);
-                        
-                        await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
-                        
+                        // Background එකේ Broadcast කිරීම ආරම්භ කිරීම (using ctx.waitUntil)
+                        ctx.waitUntil(async () => {
+                            try {
+                                const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
+                                
+                                // Admin හට ප්‍රතිඵල යැවීම (Broadcast අවසන් වූ පසු)
+                                const resultMessage = htmlBold(`Message Send Successfully ✅`) + `\n\n` + htmlBold(`🚀 Send: ${results.successfulSends}`) + `\n` + htmlBold(`❗️ Faild: ${results.failedSends}`);
+                                
+                                // Broadcast පණිවිඩයටම Reply කර ප්‍රතිඵල යැවීම
+                                await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
+
+                            } catch (e) {
+                                console.error("Broadcast Process Failed in WaitUntil:", e);
+                                await handlers.sendMessage(chatId, htmlBold("❌ Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය."), messageToBroadcastId);
+                            }
+                        }());
+
                         return new Response('OK', { status: 200 });
                     }
                 }
@@ -517,9 +537,9 @@ export default {
                                 handlers.progressActive = false;
                                 const errorText = htmlBold('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.');
                                 if (progressMessageId) {
-                                    await handlers.editMessage(chatId, progressMessageId, errorText); 
+                                     await handlers.editMessage(chatId, progressMessageId, errorText); 
                                 } else {
-                                    await handlers.sendMessage(chatId, errorText, messageId);
+                                     await handlers.sendMessage(chatId, errorText, messageId);
                                 }
                             }
                             
@@ -558,27 +578,27 @@ export default {
                  }
 
                  switch (data) {
-                    case 'admin_users_count':
-                        const usersCount = await handlers.getAllUsersCount();
-                        const countMessage = htmlBold(`📊 දැනට ඔබගේ Bot භාවිතා කරන Users ගණන: ${usersCount}`);
-                        await handlers.editMessage(chatId, messageId, countMessage);
-                        await handlers.answerCallbackQuery(callbackQuery.id, `Users ${usersCount} ක් සිටී.`);
-                        break;
-                    
-                    case 'admin_broadcast':
-                        // Sending a new message/prompt for the broadcast
-                        const broadcastPrompt = htmlBold(`📣 Broadcast පණිවිඩය\n\nකරුණාකර දැන් ඔබ යැවීමට අවශ්‍ය <b>Text, Photo, හෝ Video</b> එක <b>Reply</b> කරන්න.`);
-                        // Send the prompt as a new message, replying to the button message
-                        await handlers.sendMessage(chatId, broadcastPrompt, messageId); 
-                        await handlers.answerCallbackQuery(callbackQuery.id, "Broadcast කිරීම සඳහා පණිවිඩය සූදානම්.");
-                        break;
-                    
-                    case 'ignore_c_d_h':
-                        await handlers.answerCallbackQuery(callbackQuery.id, "මෙය තොරතුරු බොත්තමකි.");
-                        break;
-                }
+                     case 'admin_users_count':
+                         const usersCount = await handlers.getAllUsersCount();
+                         const countMessage = htmlBold(`📊 දැනට ඔබගේ Bot භාවිතා කරන Users ගණන: ${usersCount}`);
+                         await handlers.editMessage(chatId, messageId, countMessage);
+                         await handlers.answerCallbackQuery(callbackQuery.id, `Users ${usersCount} ක් සිටී.`);
+                         break;
+                     
+                     case 'admin_broadcast':
+                         // Sending a new message/prompt for the broadcast
+                         const broadcastPrompt = htmlBold(`📣 Broadcast පණිවිඩය\n\nකරුණාකර දැන් ඔබ යැවීමට අවශ්‍ය <b>Text, Photo, හෝ Video</b> එක <b>Reply</b> කරන්න.`);
+                         // Send the prompt as a new message, replying to the button message
+                         await handlers.sendMessage(chatId, broadcastPrompt, messageId); 
+                         await handlers.answerCallbackQuery(callbackQuery.id, "Broadcast කිරීම සඳහා පණිවිඩය සූදානම්.");
+                         break;
+                     
+                     case 'ignore_c_d_h':
+                         await handlers.answerCallbackQuery(callbackQuery.id, "මෙය තොරතුරු බොත්තමකි.");
+                         break;
+                 }
 
-                return new Response('OK', { status: 200 });
+                 return new Response('OK', { status: 200 });
             }
 
 
