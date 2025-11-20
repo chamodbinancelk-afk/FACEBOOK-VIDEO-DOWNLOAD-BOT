@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V32 (Includes Broadcast Chunking/Batching for robustness against timeouts)
+ * Final Code V33 (Includes Broadcast Chunking and new /brod quick option)
  * Developer: @chamoddeshan
  */
 
@@ -394,7 +394,7 @@ export default {
                 // Save user ID to KV in the background
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
-                // A. Broadcast Message Logic (FIXED FOR BACKGROUND EXECUTION & SYNTAX ERROR)
+                // A. Broadcast Message Logic (Prompt Reply)
                 if (isOwner && message.reply_to_message) {
                     const repliedMessage = message.reply_to_message;
                     
@@ -421,13 +421,39 @@ export default {
 
                             } catch (e) {
                                 console.error("Broadcast Process Failed in WaitUntil:", e);
-                                await handlers.sendMessage(chatId, htmlBold("❌ Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය."), messageToBroadcastId);
+                                // Admin හට දෝෂ පණිවිඩයක් යැවීම
+                                await handlers.sendMessage(chatId, htmlBold("❌ Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය.") + `\n\nError: ${e.message}`, messageToBroadcastId);
                             }
                         })()); 
 
                         return new Response('OK', { status: 200 });
                     }
                 }
+                
+                // A2. Owner Quick Broadcast Option (/brod command) (නව විකල්පය)
+                if (isOwner && text && text.toLowerCase().startsWith('/brod') && message.reply_to_message) {
+                    const messageToBroadcastId = message.reply_to_message.message_id; 
+                    const originalChatId = chatId;
+                    
+                    await handlers.sendMessage(chatId, htmlBold("📣 Quick Broadcast ආරම්භ විය..."), messageId);
+
+                    ctx.waitUntil((async () => {
+                        try {
+                            const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
+                            
+                            const resultMessage = htmlBold(`Quick Message Send Successfully ✅`) + `\n\n` + htmlBold(`🚀 Send: ${results.successfulSends}`) + `\n` + htmlBold(`❗️ Faild: ${results.failedSends}`);
+                            
+                            await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
+
+                        } catch (e) {
+                            console.error("Quick Broadcast Process Failed in WaitUntil:", e);
+                            await handlers.sendMessage(chatId, htmlBold("❌ Quick Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය.") + `\n\nError: ${e.message}`, messageId);
+                        }
+                    })());
+
+                    return new Response('OK', { status: 200 });
+                }
+
                 
                 // B. /start command Handling (English HTML)
                 if (text && text.toLowerCase().startsWith('/start')) {
