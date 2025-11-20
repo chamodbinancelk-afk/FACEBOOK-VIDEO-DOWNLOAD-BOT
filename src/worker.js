@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V28 (Fixes TypeError: handlers.answerCallbackQuery is not a function)
+ * Final Code V29 (Includes fixes for CallbackQuery, Broadcast Logic, and Progress Bar Readability)
  * Developer: @chamoddeshan
  */
 
@@ -24,18 +24,19 @@ function escapeMarkdownV2(text) {
     return text;
 }
 
+// *** UPDATED PROGRESS_STATES for better readability (V29) ***
 const PROGRESS_STATES = [
-    { text: "𝙇𝙤𝙖𝙙𝙞𝙣𝙜…▒▒▒▒▒▒▒▒▒▒", percentage: "0%" },
-    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
-    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…██▒▒▒▒▒▒▒▒", percentage: "20%" },
-    { text: "𝘿𝙤𝙬𝙣లోডিং…███▒▒▒▒▒▒▒", percentage: "30%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…████▒▒▒▒▒▒", percentage: "40%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖딩…█████▒▒▒▒▒", percentage: "50%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖డింగ్…██████▒▒▒▒", percentage: "60%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖డింగ్…███████▒▒▒", percentage: "70%" },
-    { text: "𝙁𝙞𝙣𝙖𝙡𝙞𝙯𝙞𝙣𝙜…████████▒▒", percentage: "80%" },
-    { text: "𝙁𝙞𝙣𝙖𝙡𝙞𝙯𝙞𝙣𝙜…█████████▒", percentage: "90%" },
-    { text: "✅ 𝘿𝙤𝙣𝙚\\! ██████████", percentage: "100%" } 
+    { text: "⏳ <b>Loading</b>...▒▒▒▒▒▒▒▒▒▒", percentage: "0%" },
+    { text: "📥 <b>Downloading</b>...█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
+    { text: "📥 <b>Downloading</b>...██▒▒▒▒▒▒▒▒", percentage: "20%" },
+    { text: "📥 <b>Downloading</b>...███▒▒▒▒▒▒▒", percentage: "30%" },
+    { text: "📤 <b>Uploading</b>...████▒▒▒▒▒▒", percentage: "40%" },
+    { text: "📤 <b>Uploading</b>...█████▒▒▒▒▒", percentage: "50%" },
+    { text: "📤 <b>Uploading</b>...██████▒▒▒▒", percentage: "60%" },
+    { text: "📤 <b>Uploading</b>...███████▒▒▒", percentage: "70%" },
+    { text: "✨ <b>Finalizing</b>...████████▒▒", percentage: "80%" },
+    { text: "✨ <b>Finalizing</b>...█████████▒", percentage: "90%" },
+    { text: "✅ <b>Done!</b> ██████████", percentage: "100%" } 
 ];
 
 // *****************************************************************
@@ -261,10 +262,12 @@ class WorkerHandlers {
             if (!this.progressActive) break; 
 
             const state = statesToUpdate[i];
+            
+            // PROGRESS_STATES already includes HTML <b> tags in V29
             const newKeyboard = [
-                [{ text: `${state.text} ${state.percentage}`, callback_data: 'ignore_progress' }]
+                [{ text: state.text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }] // Remove HTML for button text
             ];
-            const newText = originalText + "\n" + htmlBold(`\nStatus: ${state.text}`); 
+            const newText = originalText + "\n" + htmlBold(`\nStatus:`) + ` ${state.text}`; // Use raw state.text which has bold
             
             this.editMessage(chatId, messageId, newText, newKeyboard);
         }
@@ -344,8 +347,9 @@ export default {
             [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
         ];
         
+        // Initial progress keyboard uses the first state text, removing HTML tags for button text
         const initialProgressKeyboard = [
-             [{ text: `${PROGRESS_STATES[0].text} ${PROGRESS_STATES[0].percentage}`, callback_data: 'ignore_progress' }]
+             [{ text: PROGRESS_STATES[0].text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
         ];
         // ------------------------
 
@@ -371,7 +375,7 @@ export default {
 
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
-                // A. Broadcast Message Logic (FIXED)
+                // A. Broadcast Message Logic 
                 if (isOwner && message.reply_to_message) {
                     const repliedMessage = message.reply_to_message;
                     
@@ -562,7 +566,9 @@ export default {
                         break;
                     
                     case 'admin_broadcast':
+                        // Sending a new message/prompt for the broadcast
                         const broadcastPrompt = htmlBold(`📣 Broadcast පණිවිඩය\n\nකරුණාකර දැන් ඔබ යැවීමට අවශ්‍ය <b>Text, Photo, හෝ Video</b> එක <b>Reply</b> කරන්න.`);
+                        // Send the prompt as a new message, replying to the button message
                         await handlers.sendMessage(chatId, broadcastPrompt, messageId); 
                         await handlers.answerCallbackQuery(callbackQuery.id, "Broadcast කිරීම සඳහා පණිවිඩය සූදානම්.");
                         break;
