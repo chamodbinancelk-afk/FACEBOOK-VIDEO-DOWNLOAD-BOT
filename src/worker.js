@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V38 (Implements Thumbnail Size check (< 512KB) to comply with Telegram API limits)
+ * Final Code V39 (Implements Thumbnail Pre-upload via sendPhoto and uses File ID for sendVideo)
  * Developer: @chamoddeshan
  */
 
@@ -163,8 +163,41 @@ class WorkerHandlers {
         }
     }
 
-    // --- sendVideo (With 403 Fix Headers and robust Thumbnail handling) ---
-    async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
+    // --- sendPhoto (to pre-upload thumbnail and get file_id) (V39 NEW) ---
+    async sendPhoto(chatId, photoUrl, replyToMessageId) {
+        try {
+            const response = await fetch(`${telegramApi}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    photo: photoUrl, // Direct URL to the photo
+                    reply_to_message_id: replyToMessageId,
+                    caption: htmlBold("⏳ වීඩියෝ Thumbnail එක සකසයි..."),
+                    parse_mode: 'HTML',
+                }),
+            });
+            const result = await response.json();
+            if (response.ok && result.result && result.result.photo) {
+                // Returns the largest photo file_id
+                const photoArray = result.result.photo;
+                return {
+                    messageId: result.result.message_id,
+                    fileId: photoArray[photoArray.length - 1].file_id 
+                };
+            }
+            // Log warning, but don't fail hard if photo sending fails
+            console.warn(`sendPhoto API Failed (Chat ID: ${chatId}):`, result);
+            return { messageId: null, fileId: null };
+        } catch (e) {
+            console.error(`sendPhoto Fetch Error (Chat ID: ${chatId}):`, e);
+            return { messageId: null, fileId: null };
+        }
+    }
+
+
+    // --- sendVideo (Updated to accept thumbnailFileId instead of blob logic) ---
+    async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailFileId = null, inlineKeyboard = null) {
         
         console.log(`[DEBUG] Attempting to send video. URL: ${videoUrl.substring(0, 50)}...`);
         
@@ -202,44 +235,13 @@ class WorkerHandlers {
             console.log(`[DEBUG] Video Blob size: ${videoBlob.size} bytes`);
             formData.append('video', videoBlob, 'video.mp4'); 
 
-            // 2. Robust Thumbnail Fetching and Appending (Headers and Size Check - V38 change)
-            if (thumbnailLink) {
-                console.log(`[DEBUG] Attempting to fetch thumbnail from: ${thumbnailLink.substring(0, 50)}...`); 
-
-                try {
-                    const thumbResponse = await fetch(thumbnailLink, {
-                         method: 'GET',
-                         headers: {
-                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                             'Referer': 'https://fdown.net/', 
-                         },
-                    });
-                    
-                    if (thumbResponse.ok) {
-                        const contentType = thumbResponse.headers.get('Content-Type');
-                        
-                        if (contentType && contentType.startsWith('image/')) {
-                            const thumbBlob = await thumbResponse.blob();
-                            
-                            // Check size again AND impose a Telegram safe limit (e.g., < 512KB) (V38 FIX)
-                            const MAX_THUMBNAIL_SIZE_BYTES = 512 * 1024; // 512 KB
-                            
-                            if (thumbBlob.size > 0 && thumbBlob.size < MAX_THUMBNAIL_SIZE_BYTES) { 
-                                formData.append('thumb', thumbBlob, 'thumbnail.jpg');
-                                console.log(`[DEBUG] Thumbnail successfully attached (Size: ${thumbBlob.size} bytes, Type: ${contentType}).`);
-                            } else {
-                                console.warn(`Thumbnail skipped: Size (${thumbBlob.size} bytes) is invalid or exceeds the safe limit (${MAX_THUMBNAIL_SIZE_BYTES} bytes).`);
-                            }
-                        } else {
-                            console.warn(`Thumbnail fetch OK, but content type is not image (Type: ${contentType}). Skipping.`);
-                        }
-                    } else {
-                        console.warn(`Thumbnail fetch failed with status: ${thumbResponse.status}. Skipping thumbnail.`);
-                        if (thumbResponse.body) { await thumbResponse.body.cancel(); }
-                    } 
-                } catch (e) { 
-                    console.error("Thumbnail fetch general error:", e);
-                }
+            // 2. Attach Thumbnail using File ID (V39 FIX)
+            if (thumbnailFileId) {
+                // Telegram API accepts 'thumbnail' parameter as a file_id for sendVideo
+                formData.append('thumbnail', thumbnailFileId); 
+                console.log(`[DEBUG] Thumbnail File ID attached: ${thumbnailFileId.substring(0, 10)}...`);
+            } else {
+                console.log("[DEBUG] Thumbnail File ID not available. Sending video without a thumb.");
             }
             // -----------------------------------------------------------------
             
@@ -513,15 +515,19 @@ export default {
                     return new Response('OK', { status: 200 });
                 }
 
-                // C. Facebook Link Handling (FDown Scraping & Video Sending)
+                // C. Facebook Link Handling (FDown Scraping & Video Sending) - V39 Logic
                 if (text) { 
                     const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
                     
                     if (isLink) {
                         
-                        // 1. Initial Message Send
+                        let progressMessageId = null;
+                        let thumbnailMessageId = null; // New variable for Photo message ID
+                        let thumbnailFileId = null;    // New variable for Telegram File ID
+
+                        // 1. Send Initial Progress Message (Text)
                         const initialText = htmlBold('⌛️ වීඩියෝව හඳුනා ගැනේ... කරුණාකර මොහොතක් රැඳී සිටින්න.'); 
-                        const progressMessageId = await handlers.sendMessage(
+                        progressMessageId = await handlers.sendMessage(
                             chatId, 
                             initialText, 
                             messageId, 
@@ -553,14 +559,14 @@ export default {
                             const resultHtml = await fdownResponse.text();
                             
                             let videoUrl = null;
-                            let thumbnailLink = null;
+                            let rawThumbnailLink = null;
                             
                             // Get Thumbnail Link
                             const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                             let thumbnailMatch = resultHtml.match(thumbnailRegex);
                             if (thumbnailMatch && thumbnailMatch[1]) {
-                                // Thumbnail URL එකේ &amp; encoded තිබේ නම් එය & බවට පරිවර්තනය කිරීම (V37 FIX)
-                                thumbnailLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
+                                // Fix encoding
+                                rawThumbnailLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
                             }
 
                             // Get HD or Normal Quality Link
@@ -578,24 +584,39 @@ export default {
                                 }
                             }
                             
-                            // 4. Send Video or Error
+                            // 4. Pre-upload Thumbnail if link is found (V39 FIX)
+                            // This sends the photo and gets the Telegram File ID
+                            if (rawThumbnailLink && progressMessageId) {
+                                console.log(`[DEBUG] Pre-uploading thumbnail.`);
+                                const photoResult = await handlers.sendPhoto(chatId, rawThumbnailLink, progressMessageId);
+                                thumbnailMessageId = photoResult.messageId;
+                                thumbnailFileId = photoResult.fileId;
+                            }
+
+
+                            // 5. Send Video or Error
                             if (videoUrl) {
                                 let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
                                 
-                                handlers.progressActive = false; 
-                                
-                                if (progressMessageId) {
-                                     await handlers.deleteMessage(chatId, progressMessageId);
-                                }
-                                
+                                handlers.progressActive = false; // Stop progress update
+
+                                // Send video using the obtained File ID (if any)
                                 await handlers.sendVideo(
                                     chatId, 
                                     cleanedUrl, 
                                     null, 
                                     messageId, 
-                                    thumbnailLink, 
+                                    thumbnailFileId, // Use File ID here
                                     userInlineKeyboard
                                 ); 
+                                
+                                // 6. Delete Temporary Messages (Progress Text and Thumbnail Photo)
+                                if (progressMessageId) {
+                                     await handlers.deleteMessage(chatId, progressMessageId);
+                                }
+                                if (thumbnailMessageId) {
+                                     await handlers.deleteMessage(chatId, thumbnailMessageId);
+                                }
                                 
                             } else {
                                 console.error(`[DEBUG] Video Link not found for: ${text}`);
@@ -603,6 +624,10 @@ export default {
                                 const errorText = htmlBold('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.');
                                 if (progressMessageId) {
                                      await handlers.editMessage(chatId, progressMessageId, errorText); 
+                                     // Delete thumbnail message if video failed
+                                     if (thumbnailMessageId) {
+                                         await handlers.deleteMessage(chatId, thumbnailMessageId);
+                                     }
                                 } else {
                                      await handlers.sendMessage(chatId, errorText, messageId);
                                 }
@@ -614,6 +639,9 @@ export default {
                              const errorText = htmlBold('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේදී දෝෂයක් ඇති විය.');
                              if (progressMessageId) {
                                  await handlers.editMessage(chatId, progressMessageId, errorText);
+                                 if (thumbnailMessageId) {
+                                     await handlers.deleteMessage(chatId, thumbnailMessageId);
+                                 }
                              } else {
                                  await handlers.sendMessage(chatId, errorText, messageId);
                              }
