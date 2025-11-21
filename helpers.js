@@ -1,5 +1,3 @@
-// helpers.js
-
 function htmlBold(text) {
     return `<b>${text}</b>`;
 }
