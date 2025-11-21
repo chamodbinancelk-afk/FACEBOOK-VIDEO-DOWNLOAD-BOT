@@ -5,12 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "bun run src/local.js",
-    "build": "bun build ./src/worker.js --outdir ./dist",
     "deploy": "npx wrangler deploy"
-  },
-  "dependencies": {
-    "grammy": "^1.38.3"
   },
   "devDependencies": {
     "wrangler": "^3.114.15"
