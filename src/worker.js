@@ -294,11 +294,10 @@ export default {
         // Only handle POST requests from Telegram
         if (request.method === 'POST') {
             try {
-                return await handleUpdate(request, { 
-                    // Pass bindings via the third argument if necessary, 
-                    // but grammY workerCallback handles this usually.
-                    // Accessing KV via globalThis after setting it up is simpler for this structure.
-                });
+                // FIX: Pass only the request object to handleUpdate. 
+                // This resolves the "event.respondWith is not a function" error 
+                // by using the grammY 'cloudflare' callback correctly.
+                return await handleUpdate(request);
             } catch (e) {
                 console.error("Webhook handling failed:", e.message);
                 // Return a successful response even on internal error to prevent Telegram retries
