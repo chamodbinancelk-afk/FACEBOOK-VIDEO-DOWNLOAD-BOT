@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Complete Code V51 (Removes immediate KV deletion to prevent "Expired" error on double-click/race condition)
+ * Complete Code V51 (Improved Thumbnail Failure Handling)
  * Developer: @chamoddeshan
  */
 
@@ -52,9 +52,8 @@ class WorkerHandlers {
             });
             const result = await response.json();
             if (!response.ok) {
-                // Check for BUTTON_DATA_INVALID specifically and log detail
                 if (result.description === "Bad Request: BUTTON_DATA_INVALID") {
-                     console.error(`[ERROR] sendMessage API Failed: BUTTON_DATA_INVALID. Callback data length likely exceeded 64 bytes.`);
+                    console.error(`[ERROR] sendMessage API Failed: BUTTON_DATA_INVALID. Callback data length likely exceeded 64 bytes.`);
                 }
                 console.error(`sendMessage API Failed (Chat ID: ${chatId}):`, result);
                 return null;
@@ -105,7 +104,7 @@ class WorkerHandlers {
                 method: 'GET',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Referer': 'https://fdown.net/',
+                    'Referer': 'https://fdown.net/', // ⬅️ Video Download Source (fdown.net header)
                 },
             });
             
@@ -201,7 +200,6 @@ class WorkerHandlers {
                     message_id: messageId,
                     text: text,
                     parse_mode: 'HTML',
-                    // The edit method already expects reply_markup here
                     ...(inlineKeyboard !== null && { reply_markup: { inline_keyboard: inlineKeyboard } }),
                 }),
             });
@@ -210,7 +208,6 @@ class WorkerHandlers {
                 console.log("[SUCCESS] editMessageText successful.");
                 return true;
             }
-            // Non-fatal error log for edits
             console.warn(`[WARN] editMessageText failed for ${messageId}:`, result);
             return false;
         } catch (e) {
@@ -250,6 +247,7 @@ class WorkerHandlers {
 // *****************************************************************
 
 async function fetchVideoInfo(link) {
+    // ⬅️ API හරහා Video තොරතුරු ලබා ගැනීම
     const apiUrl = "https://fdown.isuru.eu.org/info";
     
     const apiResponse = await fetch(apiUrl, {
@@ -329,14 +327,8 @@ export default {
                         downloadLink = kvData.qualityMap[quality];
 
                         // ***********************************************
-                        // *** FIX: REMOVED KV DELETION STEP ***
-                        // The entry will now expire automatically after 1 hour (TTL). 
-                        // This prevents the "Expired" error on duplicate/race condition clicks.
-                        // await handlers.kv.delete(videoKey); 
-                        // console.log(`[SUCCESS] KV cache cleared for key: ${videoKey}`);
+                        // *** FIX: REMOVED KV DELETION STEP *** (V51 Fix)
                         // ***********************************************
-                        
-                        // --- End KV Read and Process Logic ---
                         
                         if (!downloadLink) {
                             await handlers.editMessageText(chatId, messageId, htmlBold(`❌ ${quality} වීඩියෝ ලින්ක් එක සොයා ගැනීමට නොහැකි විය (KV Link Missing).`));
@@ -348,7 +340,8 @@ export default {
                         // Remove '&amp;' from URL for sendVideo API
                         downloadLink = downloadLink.replace(/&amp;/g, '&'); 
                         
-                        const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption, null, null);
+                        // Note: thumbnailLink is null here, but sendVideo attempts to fetch thumbnail if provided
+                        const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption, null, null); 
 
                         if (sentVideoId) {
                             // 5. Success: Edit the original button message
@@ -413,7 +406,7 @@ export default {
                         
                         console.log(`[DEBUG] API Response:`, JSON.stringify(videoData));
                         
-                        // Extract information
+                        // Extract information - Robustly
                         let rawThumbnailLink = null;
                         let videoTitle = 'Facebook Video';
                         let duration = null;
@@ -421,51 +414,37 @@ export default {
                         let viewCount = null;
                         let uploadDate = null;
                         
-                        if (videoData.video_info) {
-                            if (videoData.video_info.thumbnail) {
-                                rawThumbnailLink = videoData.video_info.thumbnail.replace(/&amp;/g, '&');
-                            }
-                            if (videoData.video_info.title) {
-                                videoTitle = videoData.video_info.title;
-                            }
-                            // ... other video_info fields (duration, uploader, view_count, upload_date)
-                            duration = videoData.video_info.duration;
-                            uploader = videoData.video_info.uploader;
-                            viewCount = videoData.video_info.view_count;
-                            uploadDate = videoData.video_info.upload_date;
-                            
-                        } else if (videoData.thumbnail) {
-                            rawThumbnailLink = videoData.thumbnail.replace(/&amp;/g, '&');
-                        } else if (videoData.data && videoData.data.thumbnail) {
-                            rawThumbnailLink = videoData.data.thumbnail.replace(/&amp;/g, '&');
-                        }
+                        // ⭐️ වැඩිදියුණු කළ Thumbnail Extraction Logic
+                        const info = videoData.video_info || videoData.data || videoData;
                         
-                        if (!videoTitle && videoData.title) {
-                            videoTitle = videoData.title;
-                        } else if (!videoTitle && videoData.data && videoData.data.title) {
-                            videoTitle = videoData.data.title;
+                        if (info) {
+                            if (info.thumbnail) {
+                                rawThumbnailLink = info.thumbnail.replace(/&amp;/g, '&');
+                            }
+                            if (info.title) {
+                                videoTitle = info.title;
+                            }
+                            duration = info.duration;
+                            uploader = info.uploader;
+                            viewCount = info.view_count;
+                            uploadDate = info.upload_date;
                         }
                         
                         console.log(`[DEBUG] Thumbnail URL: ${rawThumbnailLink}`);
                         console.log(`[DEBUG] Video Title: ${videoTitle}`);
 
-                        // Send Photo or Error
+                        let photoMessageId = null;
+
+                        // ⭐️ Thumbnail යැවීමේ කොටස
                         if (rawThumbnailLink) {
-                            // Format duration (seconds to MM:SS)
+                            // Format duration, viewCount, uploadDate (කලින් තිබූ Logic එක)
                             let durationText = '';
                             if (duration) {
                                 const minutes = Math.floor(duration / 60);
                                 const seconds = Math.floor(duration % 60);
                                 durationText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
                             }
-                            
-                            // Format view count with commas
-                            let viewCountText = '';
-                            if (viewCount) {
-                                viewCountText = viewCount.toLocaleString();
-                            }
-                            
-                            // Format upload date (YYYYMMDD to readable format)
+                            let viewCountText = viewCount ? (typeof viewCount === 'string' ? viewCount : viewCount.toLocaleString()) : '';
                             let uploadDateText = '';
                             if (uploadDate && uploadDate.length === 8) {
                                 const year = uploadDate.substring(0, 4);
@@ -474,7 +453,7 @@ export default {
                                 uploadDateText = `${year}-${month}-${day}`;
                             }
                             
-                            // Build caption with all information
+                            // Build caption
                             let caption = `${htmlBold(videoTitle)}\n\n`;
                             if (uploader) caption += `👤 ${uploader}\n`;
                             if (durationText) caption += `⏱️ Duration: ${durationText}\n`;
@@ -482,7 +461,8 @@ export default {
                             if (uploadDateText) caption += `📅 Uploaded: ${uploadDateText}\n`;
                             caption += `\n✅ ${htmlBold('Thumbnail Downloaded!')}`;
                             
-                            const photoMessageId = await handlers.sendPhoto(
+                            // Send the Thumbnail Photo
+                            photoMessageId = await handlers.sendPhoto(
                                 chatId, 
                                 rawThumbnailLink, 
                                 messageId,
@@ -490,86 +470,89 @@ export default {
                             );
                             
                             if (photoMessageId && initialMessage) {
-                                // Delete the initial "Searching..." message
+                                // සාර්ථක නම් "Searching..." message එක මකන්න
                                 handlers.deleteMessage(chatId, initialMessage); 
                                 console.log("[SUCCESS] Thumbnail sent successfully and temporary message deleted.");
-                            } else if (!photoMessageId) {
-                                await handlers.sendMessage(chatId, htmlBold('❌ Thumbnail එක යැවීම අසාර්ථක විය. කරුණාකර වෙනත් Link එකක් උත්සහා කරන්න.'), messageId);
+                            } else {
+                                // Thumbnail යැවීම අසාර්ථක වුවහොත්, initial message එක Edit කරන්න
+                                console.warn("[WARN] Thumbnail sending failed. Editing initial message instead.");
+                                await handlers.editMessageText(chatId, initialMessage, htmlBold('⚠️ Thumbnail එක යැවීම අසාර්ථක විය. Quality Buttons යවමින්...'));
+                                photoMessageId = initialMessage; 
+                            }
+                        } else if (initialMessage) {
+                             // Thumbnail Link එකක් සොයා ගැනීමට නොහැකි වූ විට
+                             await handlers.editMessageText(chatId, initialMessage, htmlBold('⚠️ සමාවෙන්න, මේ Video එකේ Thumbnail එක සොයා ගැනීමට නොහැකි විය. Quality Buttons යවමින්...'));
+                             photoMessageId = initialMessage;
+                        }
+                        
+                        // Send quality selection buttons after thumbnail
+                        if (videoData.available_formats && videoData.available_formats.length > 0) {
+                            
+                            // --- KV Logic Start: Store data and use short key in callback_data ---
+                            if (!handlers.kv) {
+                                console.error("[CRITICAL] USER_DATABASE KV binding is missing. Cannot proceed with short callbacks.");
+                                await handlers.sendMessage(chatId, htmlBold('❌ දත්ත ගබඩාව (KV) නොමැත. කරුණාකර Bot සකස් කරන්න.'), messageId);
+                                return new Response('OK', { status: 200 });
                             }
                             
-                            // Send quality selection buttons after thumbnail
-                            if (videoData.available_formats && videoData.available_formats.length > 0) {
-                                
-                                // --- KV Logic Start: Store data and use short key in callback_data ---
-                                if (!handlers.kv) {
-                                    console.error("[CRITICAL] USER_DATABASE KV binding is missing. Cannot proceed with short callbacks.");
-                                    await handlers.sendMessage(chatId, htmlBold('❌ දත්ත ගබඩාව (KV) නොමැත. කරුණාකර Bot සකස් කරන්න.'), messageId);
-                                    return new Response('OK', { status: 200 });
+                            const chatIdStr = String(chatId);
+                            const timestamp = Math.floor(Date.now() / 1000);
+                            // Create a short, unique key: v_<chatId prefix>_<timestamp>
+                            const videoKey = `v_${chatIdStr.substring(0, 8)}_${timestamp}`; 
+
+                            const qualityMap = {};
+                            const availableQualities = [];
+
+                            // Populate qualityMap and availableQualities
+                            videoData.available_formats.forEach(format => {
+                                if (!qualityMap[format.quality]) {
+                                    let decodedUrl = format.url.replace(/&amp;/g, '&');
+                                    qualityMap[format.quality] = decodedUrl;
+                                    availableQualities.push(format.quality);
                                 }
-                                
-                                const chatIdStr = String(chatId);
-                                const timestamp = Math.floor(Date.now() / 1000);
-                                // Create a short, unique key: v_<chatId prefix>_<timestamp>
-                                const videoKey = `v_${chatIdStr.substring(0, 8)}_${timestamp}`; 
+                            });
 
-                                const qualityMap = {};
-                                const availableQualities = [];
+                            // Sort qualities
+                            const qualityOrder = ['360p', '480p', '720p', '1080p', '1920p'];
+                            availableQualities.sort((a, b) => {
+                                const aIndex = qualityOrder.indexOf(a);
+                                const bIndex = qualityOrder.indexOf(b);
+                                const aSort = aIndex === -1 ? 999 : aIndex;
+                                const bSort = bIndex === -1 ? 999 : bIndex;
+                                return aSort - bSort;
+                            });
 
-                                // Populate qualityMap and availableQualities
-                                videoData.available_formats.forEach(format => {
-                                    if (!qualityMap[format.quality]) {
-                                        let decodedUrl = format.url.replace(/&amp;/g, '&');
-                                        qualityMap[format.quality] = decodedUrl;
-                                        availableQualities.push(format.quality);
-                                    }
-                                });
+                            // Store essential data (URL map and title) in KV. Expires after 3600 seconds (1 hour).
+                            const kvData = { 
+                                title: videoTitle, 
+                                qualityMap: qualityMap 
+                            };
+                            
+                            await handlers.kv.put(videoKey, JSON.stringify(kvData), { expirationTtl: 3600 });
+                            console.log(`[SUCCESS] Data stored in KV with key: ${videoKey}`);
+                            
+                            // Create buttons
+                            const qualityButtons = availableQualities.map(quality => [{
+                                text: `📥 Download ${quality}`,
+                                callback_data: `dl_${videoKey}_${quality}` 
+                            }]);
+                            
+                            // --- KV Logic End ---
 
-                                // Sort qualities: prioritize formats with audio (lower resolutions typically have audio)
-                                // Higher resolutions on Facebook are often video-only streams
-                                const qualityOrder = ['360p', '480p', '720p', '1080p', '1920p'];
-                                availableQualities.sort((a, b) => {
-                                    const aIndex = qualityOrder.indexOf(a);
-                                    const bIndex = qualityOrder.indexOf(b);
-                                    const aSort = aIndex === -1 ? 999 : aIndex;
-                                    const bSort = bIndex === -1 ? 999 : bIndex;
-                                    return aSort - bSort;
-                                });
-
-                                // Store essential data (URL map and title) in KV. Expires after 3600 seconds (1 hour).
-                                const kvData = { 
-                                    title: videoTitle, 
-                                    qualityMap: qualityMap 
-                                };
-                                
-                                await handlers.kv.put(videoKey, JSON.stringify(kvData), { expirationTtl: 3600 });
-                                console.log(`[SUCCESS] Data stored in KV with key: ${videoKey}`);
-                                
-                                // Create buttons: [[B1], [B2], [B3], ...] - each button on a new row.
-                                // Note: Lower qualities are listed first as they typically include audio
-                                const qualityButtons = availableQualities.map(quality => [{
-                                    text: `📥 Download ${quality}`,
-                                    // Use the short key and quality for the callback data
-                                    callback_data: `dl_${videoKey}_${quality}` 
-                                }]);
-                                
-                                // --- KV Logic End ---
-
-                                // Send the message with the inline keyboard
-                                await handlers.sendMessage(
-                                    chatId,
-                                    `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}\n${videoTitle}`,
-                                    null, // No reply_to_message_id for this message
-                                    qualityButtons 
-                                );
-                                
-                                console.log("[SUCCESS] Quality selection buttons prepared and sent.");
-                            }
-
+                            // Send the message with the inline keyboard
+                            await handlers.sendMessage(
+                                chatId,
+                                `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}\n${videoTitle}`,
+                                photoMessageId ? null : messageId, // Thumbnail එක ගියේ නම් reply කරන්න එපා
+                                qualityButtons  
+                            );
+                            
+                            console.log("[SUCCESS] Quality selection buttons prepared and sent.");
                         } else {
-                            console.error(`[ERROR] Thumbnail not found in API response for: ${text}`);
-                            const errorText = htmlBold('⚠️ සමාවෙන්න, මේ Video එකේ Thumbnail එක සොයා ගැනීමට නොහැකි විය.');
-                            if (initialMessage) {
-                                await handlers.editMessageText(chatId, initialMessage, errorText); // Edit the "Searching..." message
+                            // Format සොයා ගැනීමට නොහැකි වූ විට
+                            const errorText = htmlBold('❌ වීඩියෝ බාගත කිරීමේ Format සොයා ගැනීමට නොහැකි විය. කරුණාකර නැවත උත්සහා කරන්න.');
+                            if (initialMessage && !rawThumbnailLink) {
+                                await handlers.editMessageText(chatId, initialMessage, errorText);
                             } else {
                                 await handlers.sendMessage(chatId, errorText, messageId);
                             }
@@ -577,7 +560,7 @@ export default {
                         
                     } catch (apiError) {
                         console.error(`[ERROR] API Error (Chat ID: ${chatId}):`, apiError);
-                        const errorText = htmlBold('❌ Video තොරතුරු ලබා ගැනීමේ දෝෂයක් ඇති විය. කරුණාකර නැවත උත්සහා කරන්න.');
+                        const errorText = htmlBold('❌ Video තොරතුරු ලබා ගැනීමේ දෝෂයක් ඇති විය. කරුණාකර නැවත උත්සහා කරන්න. (API Failed)');
                         if (initialMessage) {
                             await handlers.editMessageText(chatId, initialMessage, errorText); // Edit the "Searching..." message
                         } else {
