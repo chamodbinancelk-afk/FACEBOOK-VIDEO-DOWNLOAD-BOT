@@ -1,6 +1,3 @@
-import { WorkerHandlers } from './handlers';
-import { getApiMetadata, scrapeVideoLinkAndThumbnail } from './api';
-import { formatCaption, htmlBold } from './helpers';
 import { MAX_FILE_SIZE_BYTES, PROGRESS_STATES, USER_LIST_KEY } from './config';
 
 function htmlBold(text) {
