@@ -94,29 +94,78 @@ class WorkerHandlers {
         }
     }
 
-    // --- sendVideo (Send video directly from URL) ---
-    async sendVideo(chatId, videoUrl, caption = null) {
+    // --- sendVideo (Download & Upload as Blob - Preserves Audio) ---
+    async sendVideo(chatId, videoUrl, caption = null, replyToMessageId = null, thumbnailLink = null) {
+        
+        console.log(`[DEBUG] Attempting to send video. URL: ${videoUrl.substring(0, 50)}...`);
+        
         try {
-            console.log(`[INFO] Sending video from URL: ${videoUrl.substring(0, 50)}...`);
-            const response = await fetch(`${telegramApi}/sendVideo`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    video: videoUrl,
-                    caption: caption || htmlBold("✅ Video Downloaded!"),
-                    parse_mode: 'HTML',
-                }),
+            // Download video with proper headers to get complete file with audio
+            const videoResponse = await fetch(videoUrl, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Referer': 'https://fdown.net/',
+                },
             });
-            const result = await response.json();
-            if (response.ok) {
-                console.log("[SUCCESS] sendVideo successful.");
-                return result.result.message_id;
+            
+            if (videoResponse.status !== 200) {
+                console.error(`[DEBUG] Video Fetch Failed! Status: ${videoResponse.status} for URL: ${videoUrl}`);
+                if (videoResponse.body) { await videoResponse.body.cancel(); }
+                await this.sendMessage(chatId, htmlBold(`⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි. CDN වෙත පිවිසීමට නොහැක. (HTTP ${videoResponse.status})`), replyToMessageId);
+                return null;
             }
-            console.error(`[ERROR] sendVideo API Failed (Chat ID: ${chatId}):`, result);
-            return null;
+            
+            const videoBlob = await videoResponse.blob();
+            
+            const formData = new FormData();
+            formData.append('chat_id', chatId);
+            
+            if (caption) {
+                formData.append('caption', caption);
+                formData.append('parse_mode', 'HTML'); 
+            }
+            
+            if (replyToMessageId) {
+                formData.append('reply_to_message_id', replyToMessageId);
+            }
+            
+            console.log(`[DEBUG] Video Blob size: ${videoBlob.size} bytes`);
+            formData.append('video', videoBlob, 'video.mp4'); 
+
+            if (thumbnailLink) {
+                try {
+                    const thumbResponse = await fetch(thumbnailLink);
+                    if (thumbResponse.ok) {
+                        const thumbBlob = await thumbResponse.blob();
+                        formData.append('thumb', thumbBlob, 'thumbnail.jpg');
+                    } else {
+                        if (thumbResponse.body) { await thumbResponse.body.cancel(); }
+                    } 
+                } catch (e) { 
+                    console.warn("Thumbnail fetch failed:", e);
+                }
+            }
+
+            const telegramResponse = await fetch(`${telegramApi}/sendVideo`, {
+                method: 'POST',
+                body: formData, 
+            });
+            
+            const telegramResult = await telegramResponse.json();
+            
+            if (!telegramResponse.ok) {
+                console.error(`[DEBUG] sendVideo API Failed! Result:`, telegramResult);
+                await this.sendMessage(chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'})`), replyToMessageId);
+                return null;
+            } else {
+                console.log(`[DEBUG] sendVideo successful.`);
+                return telegramResult.result.message_id;
+            }
+            
         } catch (e) {
-            console.error(`[ERROR] sendVideo Fetch Error (Chat ID: ${chatId}):`, e);
+            console.error(`[DEBUG] sendVideo General Error (Chat ID: ${chatId}):`, e);
+            await this.sendMessage(chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Network හෝ Timeout දෝෂයක්).`), replyToMessageId);
             return null;
         }
     }
@@ -299,7 +348,7 @@ export default {
                         // Remove '&amp;' from URL for sendVideo API
                         downloadLink = downloadLink.replace(/&amp;/g, '&'); 
                         
-                        const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption);
+                        const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption, null, null);
 
                         if (sentVideoId) {
                             // 5. Success: Edit the original button message
