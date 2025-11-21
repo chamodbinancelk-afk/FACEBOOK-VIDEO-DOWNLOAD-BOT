@@ -7,9 +7,9 @@ compatibility_flags = ["nodejs_compat"]
 command = "bun run build"
 watch_dir = "src"
 
-[[kv_namespaces]]
-binding = "USER_DATABASE"
-id = "e32386263b3f447eae2685c169993e1a"
+kv_namespaces = [
+  { binding = "USER_DATABASE", id = "e32386263b3f447eae2685c169993e1a" }
+]
 
 [observability]
 enabled = true
