@@ -15,7 +15,40 @@ class WorkerHandlers {
         this.progressActive = true; 
     }
     
-    // ... අනෙකුත් functions (saveUserId, getAllUsersCount, sendAction, sendMessage, deleteMessage, editMessage, answerCallbackQuery) එලෙසම තබන්න ...
+    // ⚠️ saveUserId function එක (දෝෂය නිවැරදි කර ඇත)
+    async saveUserId(userId) { 
+        if (!this.env.USER_DATABASE) return; 
+        const key = `user:${userId}`;
+        const isNew = await this.env.USER_DATABASE.get(key) === null; 
+        if (isNew) {
+            try {
+                await this.env.USER_DATABASE.put(key, "1"); 
+            } catch (e) {}
+        }
+    }
+    
+    async getAllUsersCount() {
+        if (!this.env.USER_DATABASE) return 0;
+        try {
+            const list = await this.env.USER_DATABASE.list({ prefix: 'user:' });
+            return list.keys.length;
+        } catch (e) {
+            return 0;
+        }
+    }
+    
+    async sendAction(chatId, action) {
+        try {
+            await fetch(`${telegramApi}/sendChatAction`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    action: action,
+                }),
+            });
+        } catch (e) {}
+    }
 
     async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
@@ -40,9 +73,58 @@ class WorkerHandlers {
         }
     }
     
-    // ... deleteMessage, editMessage, answerCallbackQuery functions එලෙසම තබන්න ...
+    async deleteMessage(chatId, messageId) {
+        try {
+            await fetch(`${telegramApi}/deleteMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                }),
+            });
+        } catch (e) {}
+    }
     
-    // ⚠️ යාවත්කාලීන කළ sendLinkMessage ශ්‍රිතය
+    async editMessage(chatId, messageId, text, inlineKeyboard = null) {
+        try {
+            const body = {
+                chat_id: chatId,
+                message_id: messageId,
+                text: text,
+                parse_mode: 'HTML', 
+                ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
+            };
+            const response = await fetch(`${telegramApi}/editMessageText`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            
+            const result = await response.json(); 
+
+             if (!response.ok) {
+                if (result.error_code === 400 && result.description && result.description.includes("message to edit not found")) {
+                     return;
+                }
+            }
+        } catch (e) {}
+    }
+    
+    async answerCallbackQuery(callbackQueryId, text) {
+        try {
+            await fetch(`${telegramApi}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callback_query_id: callbackQueryId,
+                    text: text,
+                    show_alert: true, 
+                }),
+            });
+        } catch (e) {}
+    }
+
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
         const MAX_FILE_SIZE_BYTES_LIMIT = parseInt(MAX_FILE_SIZE_BYTES) || 52428800; // config.js වෙතින්
         const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES_LIMIT / (1024 * 1024);
@@ -76,7 +158,7 @@ class WorkerHandlers {
         const encodedDuration = btoa(duration);
         const encodedViews = btoa(views.toString().replace(/,/g, '')); 
         const encodedUploadDate = btoa(uploadDate);
-        const encodedThumbnailUrl = btoa(thumbnailUrl); // Thumbnail URL Encode කිරීම
+        const encodedThumbnailUrl = btoa(thumbnailUrl); 
         
         // 3. Redirect Link එක සාදා, සියලු දත්ත එක් කිරීම
         const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; // ⚠️ මෙය ඔබගේ URL එකට වෙනස් කරන්න
@@ -102,12 +184,9 @@ class WorkerHandlers {
         );
     }
     
-    // ... sendVideo, simulateProgress, broadcastMessage functions එලෙසම තබන්න ...
-
     async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
         
         try {
-            // ... (sendVideo function එකේ පෙර කේතය)
             
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
