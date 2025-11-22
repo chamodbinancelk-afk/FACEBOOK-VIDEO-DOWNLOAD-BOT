@@ -1,11 +1,32 @@
+// index.js (fbindex.js)
+
 import { WorkerHandlers } from './handlers';
 import { getApiMetadata, scrapeVideoLinkAndThumbnail } from './api';
 import { formatCaption, htmlBold } from './helpers';
-import { PROGRESS_STATES } from './config';
+import { OWNER_ID, PROGRESS_STATES } from './config';
 
 export default {
     
     async fetch(request, env, ctx) {
+        
+        // 50MB+ වීඩියෝ සඳහා GitHub Pages Download Page එකට redirection
+        const url = new URL(request.url);
+        if (url.pathname === '/download' && request.method === 'GET') {
+            
+            // **වැදගත්:** 'YOUR_GITHUB_PAGES_URL' වෙනුවට index.html ගොනුව ඇති සත්‍ය URL එක ඇතුලත් කරන්න.
+            const githubPagesBaseUrl = env.GITHUB_PAGES_URL || 'https://<ඔබේ_පරිශීලක_නම>.github.io/<ඔබේ_රෙපෝ_නම>/index.html'; 
+            
+            const redirectUrl = new URL(githubPagesBaseUrl);
+            
+            // Query parameters, Worker වෙතින් ලැබුණු ඒවා, GitHub Pages වෙත යොමු කරයි.
+            url.searchParams.forEach((value, key) => {
+                redirectUrl.searchParams.set(key, value);
+            });
+            
+            // 302 (Found) Redirect එකක් යවයි
+            return Response.redirect(redirectUrl.toString(), 302);
+        }
+
         if (request.method !== 'POST') {
             return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
@@ -35,12 +56,13 @@ export default {
                 const chatId = message.chat.id;
                 const messageId = message.message_id;
                 const text = message.text ? message.text.trim() : null; 
-                const isOwner = env.OWNER_ID && chatId.toString() === env.OWNER_ID.toString();
+                const isOwner = OWNER_ID && chatId.toString() === OWNER_ID.toString();
                 
                 const userName = message.from.first_name || "User"; 
 
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
+                // --- Admin/Broadcast Logic ---
                 if (isOwner && message.reply_to_message) {
                     const repliedMessage = message.reply_to_message;
                     
@@ -85,7 +107,7 @@ export default {
                                                 + htmlBold(`🚀 Successful: `) + results.successfulSends + '\n'
                                                 + htmlBold(`❗️ Failed/Blocked: `) + results.failedSends;
                             
-                            await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
+                            await handlers.sendMessage(chatId, resultMessage, messageId); 
 
                         } catch (e) {
                             await handlers.sendMessage(chatId, htmlBold("❌ Quick Broadcast failed.") + `\n\nError: ${e.message}`, messageId);
@@ -144,7 +166,7 @@ export default {
                         }
                         
                         try {
-                            const apiData = await getApiMetadata(text, env.API_URL);
+                            const apiData = await getApiMetadata(text);
                             const finalCaption = formatCaption(apiData);
                             
                             const scraperData = await scrapeVideoLinkAndThumbnail(text);
@@ -156,18 +178,18 @@ export default {
                             if (videoUrl) {
                                 handlers.progressActive = false; 
                                 
-                                const MAX_FILE_SIZE = parseInt(env.MAX_FILE_SIZE_BYTES) || 52428800; // Default 50MB
-                                
-                                if (apiData.filesize > MAX_FILE_SIZE) { 
+                                if (apiData.filesize > 50 * 1024 * 1024) { 
                                     if (progressMessageId) {
                                         await handlers.deleteMessage(chatId, progressMessageId);
                                     }
                                     
+                                    // apiData සම්පූර්ණයෙන්ම යවයි
                                     await handlers.sendLinkMessage(
                                         chatId,
                                         videoUrl, 
                                         finalCaption, 
-                                        messageId
+                                        messageId,
+                                        apiData 
                                     );
                                     
                                 } else {
@@ -238,8 +260,7 @@ export default {
                      return new Response('OK', { status: 200 });
                  }
                  
-                 // OWNER_ID env එකෙන් ලබා ගනී
-                 if (env.OWNER_ID && chatId.toString() !== env.OWNER_ID.toString()) {
+                 if (OWNER_ID && chatId.toString() !== OWNER_ID.toString()) {
                       await handlers.answerCallbackQuery(callbackQuery.id, "❌ You cannot use this command.");
                       return new Response('OK', { status: 200 });
                  }
