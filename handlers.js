@@ -1,17 +1,24 @@
-// handlers.js
-
 import { htmlBold } from './helpers';
 import { 
+    telegramApi, 
+    OWNER_ID, 
+    MAX_FILE_SIZE_BYTES, 
     PROGRESS_STATES 
 } from './config';
+
+// නව helper ශ්‍රිතය: Base64 Encoding
+function encodeBase64(text) {
+    if (!text) return '';
+    if (typeof text === 'number') text = text.toString();
+    // Cloudflare Workers පරිසරයේ btoa() භාවිතා කරයි
+    return btoa(unescape(encodeURIComponent(text))); 
+}
 
 class WorkerHandlers {
     
     constructor(env) {
         this.env = env;
         this.progressActive = true; 
-        // BOT_TOKEN භාවිතයෙන් telegramApi URL එක සාදයි
-        this.telegramApi = `https://api.telegram.org/bot${this.env.BOT_TOKEN}`; 
     }
     
     async saveUserId(userId) {
@@ -35,9 +42,10 @@ class WorkerHandlers {
         }
     }
     
+    // නව විශේෂාංගය: Chat Action යැවීම (typing, upload_video)
     async sendAction(chatId, action) {
         try {
-            await fetch(`${this.telegramApi}/sendChatAction`, {
+            await fetch(`${telegramApi}/sendChatAction`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -50,7 +58,7 @@ class WorkerHandlers {
 
     async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
-            const response = await fetch(`${this.telegramApi}/sendMessage`, {
+            const response = await fetch(`${telegramApi}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -73,7 +81,7 @@ class WorkerHandlers {
     
     async deleteMessage(chatId, messageId) {
         try {
-            const response = await fetch(`${this.telegramApi}/deleteMessage`, {
+            const response = await fetch(`${telegramApi}/deleteMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -94,7 +102,7 @@ class WorkerHandlers {
                 parse_mode: 'HTML', 
                 ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
             };
-            const response = await fetch(`${this.telegramApi}/editMessageText`, {
+            const response = await fetch(`${telegramApi}/editMessageText`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -112,7 +120,7 @@ class WorkerHandlers {
     
     async answerCallbackQuery(callbackQueryId, text) {
         try {
-            await fetch(`${this.telegramApi}/answerCallbackQuery`, {
+            await fetch(`${telegramApi}/answerCallbackQuery`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -124,33 +132,34 @@ class WorkerHandlers {
         } catch (e) {}
     }
 
-    async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
-        // MAX_FILE_SIZE_BYTES env එකෙන් ලබා ගනී
-        const MAX_FILE_SIZE_MB = (parseInt(this.env.MAX_FILE_SIZE_BYTES) || 52428800) / (1024 * 1024);
+    async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId, apiData) {
         
-        const titleMatch = caption.match(/Title: (.*?)(\n|$)/i);
-        const videoTitle = titleMatch ? titleMatch[1].replace(/<\/?b>/g, '').trim() : 'Video File';
+        // **වැදගත්:** මෙහි 'WORKER_DOMAIN' env variable එක හෝ default URL එක භාවිතා කරන්න.
+        const workerDomain = this.env.WORKER_DOMAIN || 'https://facebookdownbot.your-worker-domain.workers.dev'; 
         
-        // 1. Base64 Encoding භාවිතයෙන් URL සහ Title එක සංකේතනය (Encode) කරයි.
-        const encodedVideoUrl = btoa(videoUrl);
-        const encodedTitle = btoa(videoTitle);
+        const downloadPageUrl = new URL(workerDomain);
+        downloadPageUrl.pathname = '/download'; // index.js මඟින් GitHub Pages වෙත යොමු කරයි.
         
-        // 2. ⚠️ වැදගත්: මෙය ඔබේ සැබෑ GitHub Pages URL එකට වෙනස් කරන්න ⚠️
-        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; 
-        
-        // URL එකට query parameters ලෙස සංකේතනය කළ දත්ත යවයි.
-        const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}`;
-        
+        // Base64 Encoding
+        downloadPageUrl.searchParams.set('url', encodeBase64(videoUrl));
+        downloadPageUrl.searchParams.set('title', encodeBase64(apiData.videoTitle));
+        downloadPageUrl.searchParams.set('uploader', encodeBase64(apiData.uploader));
+        downloadPageUrl.searchParams.set('duration', encodeBase64(apiData.duration));
+        downloadPageUrl.searchParams.set('views', encodeBase64(apiData.views));
+        downloadPageUrl.searchParams.set('uploadDate', encodeBase64(apiData.uploadDate));
+        // Thumbnail අවශ්‍ය නොවන බැවින්, 'thumbnail' parameter එක සම්පූර්ණයෙන්ම ඉවත් කර ඇත.
+
         const inlineKeyboard = [
-            // දැන්, බොත්තම ඔබගේ වෙබ් පිටුවට යොමු කරනු ඇත.
-            [{ text: '🌐 Download Link ලබා ගන්න', url: redirectLink }], 
+            [{ text: '🌐 Open Download Page', url: downloadPageUrl.toString() }], 
             [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
         ];
 
-        const largeFileMessage = htmlBold("⚠️ File Size Limit Reached!") + `\n\n`
-                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB}MB).\n`
-                           + `Please click the button below to get the direct download link from our website.\n\n`
-                           + htmlBold("Title:") + ` ${videoTitle}`; 
+        const titleMatch = caption.match(/Title: (.*?)(\n|$)/i);
+        const videoTitle = titleMatch ? titleMatch[1].replace(/<\/?b>/g, '').trim() : 'Video File';
+        
+        const largeFileMessage = htmlBold("⚠️ Large file detected (50MB+).") + `\n\n`
+                               + `The video is too large for direct Telegram upload. Please click the button below to download the file directly from the secure download page.\n\n`
+                               + htmlBold("Title:") + ` ${videoTitle}`; 
 
         await this.sendMessage(
             chatId, 
@@ -211,7 +220,7 @@ class WorkerHandlers {
                 }));
             }
 
-            const telegramResponse = await fetch(`${this.telegramApi}/sendVideo`, {
+            const telegramResponse = await fetch(`${telegramApi}/sendVideo`, {
                 method: 'POST',
                 body: formData, 
             });
@@ -265,13 +274,13 @@ class WorkerHandlers {
             
             const totalUsers = userKeys.length;
             
-            const copyMessageUrl = `${this.telegramApi}/copyMessage`; 
+            const copyMessageUrl = `${telegramApi}/copyMessage`; 
             
             for (let i = 0; i < totalUsers; i += BATCH_SIZE) {
                 const batch = userKeys.slice(i, i + BATCH_SIZE);
                 
                 const sendPromises = batch.map(async (userId) => {
-                    if (userId.toString() === this.env.OWNER_ID.toString()) return; 
+                    if (userId.toString() === OWNER_ID.toString()) return; 
 
                     try {
                         const copyBody = {
