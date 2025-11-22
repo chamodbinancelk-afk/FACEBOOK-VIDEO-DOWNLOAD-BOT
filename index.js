@@ -14,7 +14,7 @@ export default {
         if (url.pathname === '/download' && request.method === 'GET') {
             
             // **වැදගත්:** 'YOUR_GITHUB_PAGES_URL' වෙනුවට index.html ගොනුව ඇති සත්‍ය URL එක ඇතුලත් කරන්න.
-            const githubPagesBaseUrl = env.GITHUB_PAGES_URL || 'https://<ඔබේ_පරිශීලක_නම>.github.io/<ඔබේ_රෙපෝ_නම>/index.html'; 
+            const githubPagesBaseUrl = env.GITHUB_PAGES_URL || 'https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/index.html'; 
             
             const redirectUrl = new URL(githubPagesBaseUrl);
             
