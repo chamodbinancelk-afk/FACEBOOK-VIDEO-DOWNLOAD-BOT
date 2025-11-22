@@ -6,22 +6,20 @@ import {
     OWNER_ID, 
     MAX_FILE_SIZE_BYTES, 
     PROGRESS_STATES 
-} from './config'; // config.js වෙතින් නියතයන් ආයාත කරයි
+} from './config';
 
 class WorkerHandlers {
     
     constructor(env) {
         this.env = env;
         this.progressActive = true; 
-        // config.js වෙතින් telegramApi භාවිතා කරයි, නමුත් Cloudflare Worker හිදී env භාවිතය වඩාත් සුදුසුය.
-        // කෙසේ වෙතත්, මුල් කේතය telegramApi ආයාත කරන නිසා එය එලෙසම තබමු.
     }
     
     // ... අනෙකුත් functions (saveUserId, getAllUsersCount, sendAction, sendMessage, deleteMessage, editMessage, answerCallbackQuery) එලෙසම තබන්න ...
-    
+
     async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
-            const response = await fetch(`${telegramApi}/sendMessage`, { // telegramApi භාවිතා කරයි
+            const response = await fetch(`${telegramApi}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -42,19 +40,20 @@ class WorkerHandlers {
         }
     }
     
-    // ⚠️ යාවත්කාලීන කළ යුතු ප්‍රධාන ශ්‍රිතය
+    // ... deleteMessage, editMessage, answerCallbackQuery functions එලෙසම තබන්න ...
+    
+    // ⚠️ යාවත්කාලීන කළ sendLinkMessage ශ්‍රිතය
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
+        const MAX_FILE_SIZE_BYTES_LIMIT = parseInt(MAX_FILE_SIZE_BYTES) || 52428800; // config.js වෙතින්
+        const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES_LIMIT / (1024 * 1024);
         
         // 1. Metadata Extraction
-        const MAX_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024); // MAX_FILE_SIZE_BYTES config.js වෙතින්
-        
-        // Title Extraction: bold tags ඉවත් කර Title එක ලබා ගනී.
         const titleMatch = caption.match(/Title:\s*<b>(.*?)<\/b>/i);
         const videoTitle = titleMatch ? titleMatch[1].trim() : 'Video File';
         
-        // Thumbnail URL Extraction: helpers.js හි නව format එක අනුව ලබා ගනී.
+        // Thumbnail URL Extraction (helpers.js හි නව format එක අනුව)
         const thumbnailMatch = caption.match(/Thumbnail_Link:\s*(https?:\/\/\S+)/i);
-        const thumbnailUrl = thumbnailMatch ? thumbnailMatch[1].trim() : '';
+        const thumbnailUrl = thumbnailMatch ? thumbnailMatch[1].trim() : ''; 
         
         // අනෙකුත් Metadata Extraction: Emojis සහ Bold tags ඉවත් කර, අගය පමණක් ලබා ගනී.
         const cleanCaption = caption.replace(/<[^>]*>/g, '').replace(/👤|⏱️|👁️|📅/g, '').trim(); 
@@ -77,11 +76,10 @@ class WorkerHandlers {
         const encodedDuration = btoa(duration);
         const encodedViews = btoa(views.toString().replace(/,/g, '')); 
         const encodedUploadDate = btoa(uploadDate);
-        const encodedThumbnailUrl = btoa(thumbnailUrl); // ⚠️ නව Thumbnail URL Encode කිරීම
+        const encodedThumbnailUrl = btoa(thumbnailUrl); // Thumbnail URL Encode කිරීම
         
         // 3. Redirect Link එක සාදා, සියලු දත්ත එක් කිරීම
-        // ⚠️ ඔබගේ GitHub Pages URL එක මෙතනට ඇතුලත් කරන්න!
-        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; 
+        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; // ⚠️ මෙය ඔබගේ URL එකට වෙනස් කරන්න
         
         const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}&uploader=${encodedUploader}&duration=${encodedDuration}&views=${encodedViews}&uploadDate=${encodedUploadDate}&thumbnail=${encodedThumbnailUrl}`;
 
@@ -92,7 +90,7 @@ class WorkerHandlers {
         ];
 
         const largeFileMessage = htmlBold("⚠️ File Size Limit Reached!") + `\n\n`
-                           + `The video file exceeds the Telegram upload limit (${MAX_SIZE_MB.toFixed(0)}MB).\n`
+                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB.toFixed(0)}MB).\n`
                            + `Please click the button below to get the direct download link from our website.\n\n`
                            + htmlBold("Title:") + ` ${videoTitle}`; 
 
@@ -174,6 +172,7 @@ class WorkerHandlers {
         }
     }
 
+
     async simulateProgress(chatId, messageId, originalReplyId) {
         this.progressActive = true;
         const originalText = htmlBold('⌛️ Detecting video... Please wait a moment.'); 
@@ -187,7 +186,7 @@ class WorkerHandlers {
             
             if (!this.progressActive) break; 
 
-            const state = PROGRESS_STATES[i]; // PROGRESS_STATES config.js වෙතින්
+            const state = PROGRESS_STATES[i];
             
             const newKeyboard = [
                 [{ text: state.text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
@@ -199,7 +198,6 @@ class WorkerHandlers {
     }
     
     async broadcastMessage(fromChatId, originalMessageId) {
-        // ... (broadcastMessage function එකේ පෙර කේතය)
          if (!this.env.USER_DATABASE) return { successfulSends: 0, failedSends: 0 };
         
         const BATCH_SIZE = 50; 
@@ -218,7 +216,7 @@ class WorkerHandlers {
                 const batch = userKeys.slice(i, i + BATCH_SIZE);
                 
                 const sendPromises = batch.map(async (userId) => {
-                    if (userId.toString() === this.env.OWNER_ID.toString()) return; // OWNER_ID env හෝ config.js වෙතින්
+                    if (userId.toString() === OWNER_ID.toString()) return; 
 
                     try {
                         const copyBody = {
