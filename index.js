@@ -1,4 +1,4 @@
-// fbindex.js (යාවත්කාලීන කරන ලද කේතය)
+// fbindex.js - සම්පූර්ණ යාවත්කාලීන කේතය (Error Logging Fix සහිතව)
 
 import { WorkerHandlers } from './handlers';
 import { getApiMetadata, scrapeVideoLinkAndThumbnail } from './api';
@@ -9,16 +9,16 @@ export default {
     
     async fetch(request, env, ctx) {
         
-        // 50MB+ වීඩියෝ සඳහා GitHub Pages Download Page එකට redirection (නැවත එකතු කරන ලදි)
+        // --- 1. /download REDIRECT LOGIC ---
         const url = new URL(request.url);
         if (url.pathname === '/download' && request.method === 'GET') {
             
-            // **වැදගත්:** 'YOUR_GITHUB_PAGES_URL' වෙනුවට index.html ගොනුව ඇති සත්‍ය URL එක ඇතුලත් කරන්න.
+            // **වැදගත්:** GITHUB_PAGES_URL ENV විචල්‍යය භාවිතා කරන්න, නැතිනම් ඔබේ GitHub Pages URL එක සකසන්න.
             const githubPagesBaseUrl = env.GITHUB_PAGES_URL || 'https://<ඔබේ_පරිශීලක_නම>.github.io/<ඔබේ_රෙපෝ_නම>/index.html'; 
             
             const redirectUrl = new URL(githubPagesBaseUrl);
             
-            // Query parameters, Worker වෙතින් ලැබුණු ඒවා, GitHub Pages වෙත යොමු කරයි.
+            // Worker වෙතින් ලැබුණු query parameters, GitHub Pages වෙත යොමු කරයි.
             url.searchParams.forEach((value, key) => {
                 redirectUrl.searchParams.set(key, value);
             });
@@ -177,13 +177,12 @@ export default {
                             if (videoUrl) {
                                 handlers.progressActive = false; 
                                 
-                                // handlers.js වෙත apiData සම්පූර්ණයෙන් යැවීමට, මෙහි වෙනසක් අවශ්‍යයි
+                                // Large file handling: pass apiData for link generation
                                 if (apiData.filesize > 50 * 1024 * 1024) { 
                                     if (progressMessageId) {
                                         await handlers.deleteMessage(chatId, progressMessageId);
                                     }
                                     
-                                    // apiData එකත් යවන්න
                                     await handlers.sendLinkMessage(
                                         chatId,
                                         videoUrl, 
