@@ -3,26 +3,23 @@
 import { WorkerHandlers } from './handlers';
 import { getApiMetadata, scrapeVideoLinkAndThumbnail } from './api';
 import { formatCaption, htmlBold } from './helpers';
-import { OWNER_ID, PROGRESS_STATES } from './config';
+// ⚠️ නිවැරදි import: MAX_FILE_SIZE_BYTES එකතු කර ඇත
+import { OWNER_ID, PROGRESS_STATES, MAX_FILE_SIZE_BYTES } from './config'; 
 
 export default {
     
     async fetch(request, env, ctx) {
         
-        // POST method එකක් නොවේ නම් සරල ප්‍රතිචාරයක් යවයි.
         if (request.method !== 'POST') {
             return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
         
-        // Handlers class එක initialize කරයි.
         const handlers = new WorkerHandlers(env);
         
-        // පෙරනිමි inline keyboard
         const userInlineKeyboard = [
             [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
         ];
         
-        // Progress bar එකේ ආරම්භක තත්ත්වය
         const initialProgressKeyboard = [
              [{ text: PROGRESS_STATES[0].text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
         ];
@@ -36,16 +33,15 @@ export default {
                  return new Response('OK', { status: 200 });
             }
             
-            // ⚠️ වැදගත්: මෙය Telegram වෙත සෘජු ප්‍රතිචාරය අවහිර නොකළ යුතුය.
-            // වෙනත් කෙටි tasks මෙහිදී run කළ හැකියි.
-            
+            // ⚠️ වැදගත්: මෙම පේළිය ඉවත් කර ඇත (පෙර දෝෂය නිවැරදි කර ඇත)
+            // ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
+
             if (message) { 
                 const chatId = message.chat.id;
                 const messageId = message.message_id;
                 const text = message.text ? message.text.trim() : null; 
                 const isOwner = OWNER_ID && chatId.toString() === OWNER_ID.toString();
                
-                // User ID එක Database එකේ save කරයි.
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
                 // ----------------------------------------------------
@@ -61,12 +57,10 @@ export default {
                         return new Response('OK', { status: 200 });
                     }
                     
-                    // Broadcast Handling
                     if (message.reply_to_message && message.reply_to_message.text && message.reply_to_message.text.includes("📣 Broadcast Message")) {
                         const originalMessageId = message.message_id;
                         await handlers.sendMessage(chatId, htmlBold("⏳ Starting broadcast... Please wait. This may take a while."), messageId);
                         
-                        // Broadcast එක ctx.waitUntil හරහා background එකේ run කරයි
                         ctx.waitUntil((async () => {
                             const { successfulSends, failedSends } = await handlers.broadcastMessage(chatId, originalMessageId);
                             const resultText = htmlBold("✅ Broadcast Complete!") + `\n\n`
@@ -108,7 +102,6 @@ export default {
                         );
                         
                         // B. Start Progress Simulation (Background Task)
-                        // ⚠️ Bot reply එක Block නොකිරීමට මෙය ctx.waitUntil තුළට යොදන්න.
                         if (progressMessageId) {
                             ctx.waitUntil(handlers.simulateProgress(chatId, progressMessageId, messageId));
                         }
@@ -127,21 +120,20 @@ export default {
                                 const scraperData = await scrapeVideoLinkAndThumbnail(text);
                                 const videoUrl = scraperData.videoUrl;
                                 
-                                // 3. අවසන් Thumbnail Link එක තීරණය කරයි (API එකේ ඇති Link එකට ප්‍රමුඛත්වය දෙයි)
+                                // 3. අවසන් Thumbnail Link එක තීරණය කරයි
                                 const finalThumbnailLink = apiData.thumbnailLink || scraperData.fallbackThumbnail;
 
                                 
                                 if (videoUrl) {
-                                    handlers.progressActive = false; // Progress simulation නවත්වයි
+                                    handlers.progressActive = false; 
                                     
-                                    // 50MB (config.js වෙතින්) සීමාවට වඩා විශාලදැයි පරීක්ෂා කරයි
+                                    // ⚠️ MAX_FILE_SIZE_BYTES මෙහිදී භාවිතා කරයි
                                     if (apiData.filesize > MAX_FILE_SIZE_BYTES) { 
                                         
                                         if (progressMessageId) {
                                             await handlers.deleteMessage(chatId, progressMessageId);
                                         }
                                         
-                                        // සීමාව ඉක්මවා ගියහොත් Download Link එක වෙබ් පිටුවට යවයි
                                         await handlers.sendLinkMessage(
                                             chatId,
                                             videoUrl, 
@@ -150,7 +142,6 @@ export default {
                                         );
                                         
                                     } else {
-                                        // ගොනුව Telegram සීමාවට යටත් නම්, එය Upload කරයි
                                         if (progressMessageId) {
                                             await handlers.deleteMessage(chatId, progressMessageId);
                                         }
@@ -163,11 +154,10 @@ export default {
                                                 videoUrl, 
                                                 finalCaption, 
                                                 messageId, 
-                                                finalThumbnailLink, // Thumbnail Link එක යවයි
+                                                finalThumbnailLink, 
                                                 userInlineKeyboard
                                             ); 
                                         } catch (e) {
-                                            // sendVideo අසාර්ථක වුවහොත්, Link එක fallback කරයි
                                             await handlers.sendLinkMessage(
                                                 chatId,
                                                 videoUrl, 
@@ -178,7 +168,6 @@ export default {
                                     }
                                     
                                 } else {
-                                    // Download Link එක සොයා ගත නොහැකි නම්
                                     handlers.progressActive = false;
                                     const errorText = htmlBold('⚠️ Sorry, the video Download Link could not be found. The video might be Private.');
                                     if (progressMessageId) {
@@ -189,7 +178,6 @@ export default {
                                 }
                                 
                             } catch (error) {
-                                // Scraper හෝ API දෝෂ
                                 handlers.progressActive = false;
                                 console.error("Video processing error:", error);
                                 const errorText = htmlBold('❌ An error occurred while retrieving video information.');
@@ -202,12 +190,12 @@ export default {
                         })());
                         
                     } else {
-                        // Link එකක් නොවේ නම්
                         await handlers.sendMessage(chatId, htmlBold('❌ Please send a valid Facebook video link.'), messageId);
                     }
                 } 
 
-                return new Response('OK', { status: 200 }); // Bot Reply කිරීමට, මෙම OK response එක අත්‍යවශ්‍යයි.
+                // Bot Reply කිරීමට, මෙම OK response එක අත්‍යවශ්‍යයි.
+                return new Response('OK', { status: 200 }); 
 
             } 
             
@@ -253,8 +241,8 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (e) {
-            // දෝෂයක් ඇති වුවද, Telegram වෙත OK ප්‍රතිචාරය යවයි.
             console.error("Global Error:", e);
+            // දෝෂයක් ඇති වුවද, Telegram වෙත OK ප්‍රතිචාරය යවයි.
             return new Response('OK', { status: 200 }); 
         }
     }
