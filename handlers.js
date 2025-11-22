@@ -2,9 +2,6 @@
 
 import { htmlBold } from './helpers';
 import { 
-    telegramApi, 
-    OWNER_ID, 
-    MAX_FILE_SIZE_BYTES, 
     PROGRESS_STATES 
 } from './config';
 
@@ -13,10 +10,11 @@ class WorkerHandlers {
     constructor(env) {
         this.env = env;
         this.progressActive = true; 
+        // BOT_TOKEN භාවිතයෙන් telegramApi URL එක සාදයි
+        this.telegramApi = `https://api.telegram.org/bot${this.env.BOT_TOKEN}`; 
     }
     
-    // ⚠️ saveUserId function එක (දෝෂය නිවැරදි කර ඇත)
-    async saveUserId(userId) { 
+    async saveUserId(userId) {
         if (!this.env.USER_DATABASE) return; 
         const key = `user:${userId}`;
         const isNew = await this.env.USER_DATABASE.get(key) === null; 
@@ -39,7 +37,7 @@ class WorkerHandlers {
     
     async sendAction(chatId, action) {
         try {
-            await fetch(`${telegramApi}/sendChatAction`, {
+            await fetch(`${this.telegramApi}/sendChatAction`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -52,7 +50,7 @@ class WorkerHandlers {
 
     async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
-            const response = await fetch(`${telegramApi}/sendMessage`, {
+            const response = await fetch(`${this.telegramApi}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -75,7 +73,7 @@ class WorkerHandlers {
     
     async deleteMessage(chatId, messageId) {
         try {
-            await fetch(`${telegramApi}/deleteMessage`, {
+            const response = await fetch(`${this.telegramApi}/deleteMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -83,6 +81,7 @@ class WorkerHandlers {
                     message_id: messageId,
                 }),
             });
+             if (!response.ok) {}
         } catch (e) {}
     }
     
@@ -95,7 +94,7 @@ class WorkerHandlers {
                 parse_mode: 'HTML', 
                 ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
             };
-            const response = await fetch(`${telegramApi}/editMessageText`, {
+            const response = await fetch(`${this.telegramApi}/editMessageText`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -106,14 +105,14 @@ class WorkerHandlers {
              if (!response.ok) {
                 if (result.error_code === 400 && result.description && result.description.includes("message to edit not found")) {
                      return;
-                }
+                } else {}
             }
         } catch (e) {}
     }
     
     async answerCallbackQuery(callbackQueryId, text) {
         try {
-            await fetch(`${telegramApi}/answerCallbackQuery`, {
+            await fetch(`${this.telegramApi}/answerCallbackQuery`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -126,53 +125,30 @@ class WorkerHandlers {
     }
 
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
-        const MAX_FILE_SIZE_BYTES_LIMIT = parseInt(MAX_FILE_SIZE_BYTES) || 52428800; // config.js වෙතින්
-        const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES_LIMIT / (1024 * 1024);
+        // MAX_FILE_SIZE_BYTES env එකෙන් ලබා ගනී
+        const MAX_FILE_SIZE_MB = (parseInt(this.env.MAX_FILE_SIZE_BYTES) || 52428800) / (1024 * 1024);
         
-        // 1. Metadata Extraction
-        const titleMatch = caption.match(/Title:\s*<b>(.*?)<\/b>/i);
-        const videoTitle = titleMatch ? titleMatch[1].trim() : 'Video File';
+        const titleMatch = caption.match(/Title: (.*?)(\n|$)/i);
+        const videoTitle = titleMatch ? titleMatch[1].replace(/<\/?b>/g, '').trim() : 'Video File';
         
-        // Thumbnail URL Extraction (helpers.js හි නව format එක අනුව)
-        const thumbnailMatch = caption.match(/Thumbnail_Link:\s*(https?:\/\/\S+)/i);
-        const thumbnailUrl = thumbnailMatch ? thumbnailMatch[1].trim() : ''; 
-        
-        // අනෙකුත් Metadata Extraction: Emojis සහ Bold tags ඉවත් කර, අගය පමණක් ලබා ගනී.
-        const cleanCaption = caption.replace(/<[^>]*>/g, '').replace(/👤|⏱️|👁️|📅/g, '').trim(); 
-        
-        const uploaderMatch = cleanCaption.match(/Uploader:\s*(.*?)\n/i);
-        const durationMatch = cleanCaption.match(/Duration:\s*(.*?)\n/i);
-        const viewsMatch = cleanCaption.match(/Views:\s*(.*?)\n/i);
-        const uploadDateMatch = cleanCaption.match(/Uploaded:\s*(.*?)(\n|◇)/i); 
-        
-        const uploader = uploaderMatch ? uploaderMatch[1].trim() : 'N/A';
-        const duration = durationMatch ? durationMatch[1].trim() : 'N/A';
-        const views = viewsMatch ? viewsMatch[1].trim() : 'N/A';
-        const uploadDate = uploadDateMatch ? uploadDateMatch[1].trim() : 'N/A';
-        
-        
-        // 2. Base64 Encoding
+        // 1. Base64 Encoding භාවිතයෙන් URL සහ Title එක සංකේතනය (Encode) කරයි.
         const encodedVideoUrl = btoa(videoUrl);
         const encodedTitle = btoa(videoTitle);
-        const encodedUploader = btoa(uploader);
-        const encodedDuration = btoa(duration);
-        const encodedViews = btoa(views.toString().replace(/,/g, '')); 
-        const encodedUploadDate = btoa(uploadDate);
-        const encodedThumbnailUrl = btoa(thumbnailUrl); 
         
-        // 3. Redirect Link එක සාදා, සියලු දත්ත එක් කිරීම
-        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; // ⚠️ මෙය ඔබගේ URL එකට වෙනස් කරන්න
+        // 2. ⚠️ වැදගත්: මෙය ඔබේ සැබෑ GitHub Pages URL එකට වෙනස් කරන්න ⚠️
+        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; 
         
-        const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}&uploader=${encodedUploader}&duration=${encodedDuration}&views=${encodedViews}&uploadDate=${encodedUploadDate}&thumbnail=${encodedThumbnailUrl}`;
-
+        // URL එකට query parameters ලෙස සංකේතනය කළ දත්ත යවයි.
+        const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}`;
         
         const inlineKeyboard = [
+            // දැන්, බොත්තම ඔබගේ වෙබ් පිටුවට යොමු කරනු ඇත.
             [{ text: '🌐 Download Link ලබා ගන්න', url: redirectLink }], 
             [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
         ];
 
         const largeFileMessage = htmlBold("⚠️ File Size Limit Reached!") + `\n\n`
-                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB.toFixed(0)}MB).\n`
+                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB}MB).\n`
                            + `Please click the button below to get the direct download link from our website.\n\n`
                            + htmlBold("Title:") + ` ${videoTitle}`; 
 
@@ -183,11 +159,11 @@ class WorkerHandlers {
             inlineKeyboard
         );
     }
-    
+
+
     async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
         
         try {
-            
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
                 headers: {
@@ -235,7 +211,7 @@ class WorkerHandlers {
                 }));
             }
 
-            const telegramResponse = await fetch(`${telegramApi}/sendVideo`, {
+            const telegramResponse = await fetch(`${this.telegramApi}/sendVideo`, {
                 method: 'POST',
                 body: formData, 
             });
@@ -265,7 +241,7 @@ class WorkerHandlers {
             
             if (!this.progressActive) break; 
 
-            const state = PROGRESS_STATES[i];
+            const state = statesToUpdate[i];
             
             const newKeyboard = [
                 [{ text: state.text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
@@ -277,7 +253,7 @@ class WorkerHandlers {
     }
     
     async broadcastMessage(fromChatId, originalMessageId) {
-         if (!this.env.USER_DATABASE) return { successfulSends: 0, failedSends: 0 };
+        if (!this.env.USER_DATABASE) return { successfulSends: 0, failedSends: 0 };
         
         const BATCH_SIZE = 50; 
         let successfulSends = 0;
@@ -289,13 +265,13 @@ class WorkerHandlers {
             
             const totalUsers = userKeys.length;
             
-            const copyMessageUrl = `${telegramApi}/copyMessage`; 
+            const copyMessageUrl = `${this.telegramApi}/copyMessage`; 
             
             for (let i = 0; i < totalUsers; i += BATCH_SIZE) {
                 const batch = userKeys.slice(i, i + BATCH_SIZE);
                 
                 const sendPromises = batch.map(async (userId) => {
-                    if (userId.toString() === OWNER_ID.toString()) return; 
+                    if (userId.toString() === this.env.OWNER_ID.toString()) return; 
 
                     try {
                         const copyBody = {
